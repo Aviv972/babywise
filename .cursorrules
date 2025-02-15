@@ -1,0 +1,229 @@
+Babywise Chatbot: System Overview and Guidelines
+1. Architecture Overview
+The Babywise chatbot operates on a multi-agent architecture. Each specialized agent handles a specific category of queries (e.g., baby gear, pregnancy, sleep routines, nutrition), ensuring domain-specific, consistent, and reliable advice.
+
+2. Proposed System Flow
+User Query
+The user submits a query via the chat interface.
+Extract Keywords
+The system extracts key terms and phrases to understand the query’s context.
+Check Category List
+The extracted keywords are compared against a predefined category list to identify the relevant topic(s).
+Assign the Relevant Agent
+The system selects the appropriate agent based on keyword matches and domain boundaries.
+Agent Selection
+After determining the appropriate agent, the query is sent directly to that agent.
+Dynamic Question Generation
+Instead of relying on hardcoded questions, the model dynamically determines minimal clarifying questions. The agent maintains a single list called question_flow as the source of truth for clarifications.
+User Input Collection
+The agent asks clarifying questions and collects the user’s answers. These are stored in a unified context store.
+Contextual Response Formation
+The user’s clarifying answers are merged with the original query into an enriched prompt. If more clarifications are needed, the agent continues to ask follow-up questions dynamically.
+Generate Response
+Finally, the agent uses the collected information to return a concise, structured response (as a flat JSON object with "type" and "text" keys).
+Example: Centralized Question Flow
+The agent might maintain a single list called question_flow, each with a standardized field name. For instance:
+
+Field: "budget"
+English Question: "What is your budget range for the stroller?"
+Hebrew Question: "מה התקציב שלכם לעגלה?"
+Extract keys: ["budget", "price", "$", "cost", "מחיר", "עלות"]
+Field: "features"
+English Question: "What features are most important (e.g., lightweight, storage, foldable)?"
+Hebrew Question: "אילו תכונות חשובות לכם (למשל: קל משקל, אחסון, מתקפל)?"
+Extract keys: ["lightweight", "storage", "fold", "קל", "אחסון", "מתקפל"]
+Field: "usage"
+English Question: "How will you mainly use the stroller (e.g., daily walks, travel)?"
+Hebrew Question: "לאיזה שימוש העגלה מיועדת (למשל: הליכה יומית, נסיעות)?"
+Extract keys: ["daily", "travel", "walk", "יומי", "נסיעות", "הליכה"]
+3. Best Practices for Nesting Context
+Store the Original Query
+Save the initial user query immediately and do not overwrite it in later turns.
+
+Unified Context Store
+Keep a single dictionary (e.g., gathered_context or clarifications) for all follow-up answers, ensuring each clarification is in one place.
+
+Dynamic Prompt Generation
+Merge the original query and collected clarifications into a single prompt. For example:
+
+
+Original Query: [the original query].
+Clarifications:
+- [field]: [answer]
+- ...
+Please provide a detailed response based on the above information.
+4. Additional Guidelines
+4.1 Coding Standards
+Use [language] for all code files.
+Follow [style guide] for code formatting.
+Use [naming convention] for variables and functions.
+Prefer [functional/OOP] programming paradigm.
+4.2 Project Structure
+src/: Contains all source code.
+tests/: Contains all unit and integration tests.
+docs/: Contains project documentation.
+4.3 Libraries and Frameworks
+Use [framework/library name] version [X.X.X] for [purpose].
+Prefer [library] for [specific task].
+4.4 Best Practices
+Write unit tests for all new functions.
+Use async/await for asynchronous operations.
+Implement error handling for all API calls.
+Use TypeScript for type safety (if applicable).
+4.5 Code Patterns
+Use the repository pattern for data access.
+Implement dependency injection where appropriate.
+Use [specific design pattern] for [particular use case].
+4.6 Documentation
+Use JSDoc for inline documentation.
+Keep README.md up to date with project setup and usage instructions.
+4.7 Performance Considerations
+Optimize database queries for large datasets.
+Use memoization for expensive computations.
+4.8 Security
+Sanitize all user inputs.
+Use environment variables for sensitive information.
+Implement proper authentication and authorization.
+4.9 Avoid
+Do not use console.log for production logging.
+Avoid using the any type in TypeScript unless absolutely necessary.
+5. Project-Specific Guidelines
+Ensure agents adhere strictly to their defined domains (avoid overlapping advice).
+Validate and enforce context gathering so each response is personalized.
+Use clear, concise language tailored for new parents.
+Dynamically generate clarifying questions (avoid hardcoding).
+Merge user clarifications with the original query into a unified context for final response generation.
+Handle API access errors robustly, informing developers if keys are misconfigured.
+5.1 Examples
+Agent Assignment: If the query contains “stroller” or “car seat,” route to the Baby Gear Expert.
+Dynamic Question Generation: For “find me a cost-effective stroller,” clarifications needed might be “budget,” “features,” and “usage.”
+Context Merging: If the user clarifies their budget is “$300” and wants “lightweight, foldable,” store these details and merge them with the original query for the final response.
+API Access Error Handling: If an API call fails (e.g., invalid API key), return a clear error instructing developers to verify configuration.
+6. Key Project Files
+Configuration & Environment
+
+.env: Contains environment variables and API keys
+OPENAI_API_KEY
+PERPLEXITY_API_KEY
+MODEL_NAME (e.g., gpt-4o-mini)
+DATABASE_URL (SQLite or PostgreSQL path)
+Core Services
+
+src/services/llm_service.py: LLM integration (API calls to OpenAI, response generation, error handling)
+src/services/chat_session.py: Manages chat state, routes queries to agents, handles context gathering.
+Agent System
+
+src/agents/base_agent.py: Base agent functionality, query analysis, context management.
+src/agents/baby_gear_agent.py: Handles strollers, car seats, cribs; provides product recommendations.
+src/agents/pregnancy_agent.py: Handles pregnancy queries, general guidance (no medical advice).
+API & Frontend
+
+src/routes/chat.py: Backend endpoint for chat requests.
+src/static/script.js: Frontend logic (UI, message display, error handling).
+7. Review Before Tasks
+API Keys
+Check full keys in .env.
+Verify key validation in config.py.
+Test API connection in llm_service.py.
+Agent Selection
+Review agent_factory.py logic and confidence calculations.
+Test with various queries.
+Error Handling
+Verify API error catching, response formatting, and error displays.
+Testing
+Use cli_test.py for backend tests.
+Test frontend with local server.
+Check gear vs. pregnancy agent responses.
+Context Gathering
+Ensure consistent storage using a unified key (e.g., gathered_context).
+Parse and store clarifications correctly.
+Merge the original query with follow-up answers in the final prompt.
+8. Common Errors to Avoid / Common Pitfalls
+Text Format Issues
+Always return responses as flat JSON objects ({"type": "...", "text": "..."}).
+Avoid double-wrapping responses.
+Agent Assignment Mistakes
+Each agent must adhere to its domain.
+Validate that keyword matching/thresholds select the correct agent.
+Endpoint and Response Wrapping Errors
+The API endpoint should return the agent’s response directly.
+Ensure no middleware or global handlers break the flat format.
+API Access Errors
+Confirm valid, secure environment variables for the API keys.
+Catch errors like 401 and provide a helpful fallback message.
+Follow-up Questions & Context Loss
+Don’t ignore previously gathered data.
+Use a unified store so you don’t re-ask for fields you already have.
+
+CORSUR Rules for Context Management:
+
+1. Use a Single Unified Context Dictionary
+Keep all clarifying information in one place, e.g. self.conversation_state['gathered_info'].
+Whenever a user provides an answer (“my budget is $300”), store it there:
+
+self.conversation_state['gathered_info']['budget'] = "$300"
+When calling your LLM (e.g., analyze_query_intent or determine_needed_fields), always pass gathered_info so the model knows what was already collected.
+2. Don’t Overwrite the Original Query
+Only set self.conversation_state['original_query'] = incoming_user_query the first time the conversation starts.
+
+if not self.conversation_state['original_query']:
+    self.conversation_state['original_query'] = incoming_user_query
+Never overwrite it again. This preserves the user’s main question for any subsequent references.
+3. Pass Merged Context to the LLM
+Each time you generate a new prompt for the LLM, include both original_query and the entire gathered_info.
+Example:
+
+prompt = f"""
+Original Query: {context['original_query']}
+
+Clarifications so far:
+{json.dumps(context['gathered_info'], indent=2)}
+
+Now determine: do we have enough info to give a final answer?
+If not, what SINGLE question is still missing?
+"""
+This ensures the LLM sees everything (original query + clarifications), preventing repeated requests for the same data.
+4. Avoid Analyzing Only the Most Recent Snippet
+Don’t pass an empty context whenever the user types a short follow-up.
+Instead, each time, pass the entire conversation context (including gathered_info, original_query, etc.).
+
+analysis = await self.llm_service.analyze_query_intent(
+    query=user_snippet,
+    context={
+        'original_query': self.conversation_state['original_query'],
+        'gathered_info': self.conversation_state['gathered_info'],
+        # ...
+    }
+)
+This prevents the agent from “forgetting” prior clarifications.
+5. Check for Mismatched Field Names
+Use the same naming conventions everywhere. If you pick gathered_info, don’t call it gathered_context in some places and user_inputs in others.
+Inconsistent names can cause the model (and your own code) to believe no context is available.
+6. Keep a Persistent Chat History (Resend It Each Time)
+Store every user message and every assistant (model) reply in a database or similar.
+
+When you call the LLM:
+
+Retrieve the last 10 messages from this history (plus the new user message).
+Build a messages array including:
+A "system"-role message with your system prompt.
+"user" and "assistant"/"model" messages alternating from your stored history.
+The current user message with "role": "user".
+Pass that messages array to chat.completions.create().
+Example:
+
+messages = [
+    {"role": "system", "content": "... your system prompt ..."},
+    {"role": "user", "content": "User’s first query"},
+    {"role": "assistant", "content": "Your first answer"},
+    {"role": "user", "content": "User’s follow-up question"},
+    # ...
+]
+
+response = await self.client.chat.completions.create(
+    model=self.model,
+    messages=messages
+)
+Because ChatCompletion is stateless, you must resend any relevant conversation history each time.
+
+This text-based history complements your structured gathered_info. Your code logic references gathered_info for known clarifications, while the LLM sees the last N dialogue turns for continuity, style, and context.
