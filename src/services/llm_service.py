@@ -10,22 +10,45 @@ class LLMService:
         self.model = model or Config.MODEL_NAME
         self.client = AsyncOpenAI(api_key=self.api_key)
         self.system_prompt = """You are a parenting expert assistant.
-            CRITICAL INSTRUCTIONS:
-            1. NEVER lose sight of the original query's context
-            2. Each follow-up response must directly relate to the original query
-            3. Maintain all previously gathered information
-            4. If a user provides information, store it but stay focused on the original topic
-            5. Only switch topics if the user explicitly changes the subject
+            CRITICAL INSTRUCTIONS FOR CONTEXT MAINTENANCE:
+            1. The original query is your PRIMARY FOCUS - never lose sight of it
+            2. ALL follow-up questions and responses MUST directly relate to the original query
+            3. Information gathering should be CUMULATIVE - maintain ALL previously gathered info
+            4. When user provides new information:
+               - Store it
+               - Integrate it with existing context
+               - Stay focused on the original topic
+               - Do NOT switch topics unless explicitly requested
+            5. Context Rules:
+               - Always reference the original query in your responses
+               - Each response should build upon previous information
+               - Validate that new questions relate to the original goal
+               
+            Examples of Correct Context Maintenance:
             
-            Example of maintaining context:
-            Original query: "What stroller for twins?"
+            Example 1 - Stroller Query:
+            Original: "What stroller for twins?"
             User: "they are 1 year old"
-            ✓ CORRECT: Ask about stroller-specific needs for 1-year-old twins
-            ✗ WRONG: Switch to general 1-year-old development questions
+            ✓ CORRECT: "For 1-year-old twins, what's your preferred stroller style (side-by-side or tandem)?"
+            ✗ WRONG: "Let's discuss developmental milestones for 1-year-olds"
             
-            Keep responses focused and specific.
-            Provide actionable recommendations.
-            Use clear, structured formats."""
+            Example 2 - Sleep Training:
+            Original: "How to sleep train 6-month twins?"
+            User: "they currently wake up 5 times a night"
+            ✓ CORRECT: "Given they wake 5 times nightly, what sleep training method interests you for your 6-month twins?"
+            ✗ WRONG: "Let's discuss night feeding schedules"
+            
+            Example 3 - Feeding Schedule:
+            Original: "What's a good feeding schedule for twins?"
+            User: "they're exclusively breastfed"
+            ✓ CORRECT: "For breastfed twins, how often are you currently feeding them?"
+            ✗ WRONG: "Let's discuss breastfeeding positions"
+            
+            Keep responses:
+            1. Focused on original query
+            2. Building on gathered context
+            3. Specific and actionable
+            4. Structured and clear."""
 
     def merge_context(self, original_query: str, gathered_info: Dict, current_query: str) -> str:
         return f"""Original Query: {original_query}
@@ -110,79 +133,152 @@ class LLMService:
     async def analyze_query_intent(self, query: str, context: Dict, chat_history: List[Dict] = None) -> Dict:
         gathered_info = context[ContextFields.GATHERED_INFO]
         original_query = context[ContextFields.ORIGINAL_QUERY]
-        query_type = context.get(ContextFields.QUERY_TYPE, '')
-        agent_type = context.get(ContextFields.CURRENT_AGENT, '')
         
-        # Get required fields based on agent type
-        required_fields = []
-        if agent_type in RequiredFields.BY_AGENT:
-            required_fields = RequiredFields.BY_AGENT[agent_type]
+        # Format chat history for better context
+        formatted_history = ""
+        if chat_history:
+            formatted_history = "\nPrevious conversation:\n"
+            for msg in chat_history[-5:]:
+                role = "User" if msg['role'] == MessageRoles.USER else "Assistant"
+                formatted_history += f"{role}: {msg['content']}\n"
         
-        context_reminder = self._build_context_reminder(context)
-        
-        prompt = f"""{context_reminder}
+        # Build stroller-specific context-aware prompt
+        prompt = f"""STROLLER RECOMMENDATION TASK:
 
-        New user input: "{query}"
-        
-        Based on ALL the above information:
-        1. What specific field was just answered (if any)?
-        2. What critical information do we still need to address the ORIGINAL query?
-        
-        Required fields for {agent_type}:
-        {json.dumps(required_fields, indent=2)}
-        
-        Current progress:
-        {json.dumps(gathered_info, indent=2)}
-        
-        Return JSON:
+Original Query: {original_query}
+{formatted_history}
+Current User Input: "{query}"
+
+Information gathered so far:
+{json.dumps(gathered_info, indent=2)}
+
+Based on the ORIGINAL QUERY about finding a stroller and the current conversation:
+1. Extract any new information about:
+   - Budget (e.g., numbers with $ or price mentions)
+   - Preferences (e.g., lightweight, easy transport)
+   - Use case (e.g., travel, daily walks)
+   - Baby's age/weight
+2. Generate a specific follow-up question about missing stroller details
+
+Return JSON:
+{{
+    "extracted_info": [
         {{
-            "previous_field": "field_just_answered_or_null",
-            "next_question": {{
-                "field": "next_required_field_to_ask",
-                "question": "clear_natural_question_that_relates_to_original_query"
-            }}
+            "field": "budget",
+            "value": "under $400"  # Example
+        }},
+        {{
+            "field": "preferences",
+            "value": "lightweight, easy transport"  # Example
         }}
-        
-        IMPORTANT: Next question MUST be about {query_type} and relate to: {original_query}"""
+    ],
+    "next_question": {{
+        "field": "stroller_features",
+        "question": "specific_stroller_related_question"
+    }}
+}}
+
+IMPORTANT: 
+- Every question MUST be about stroller features, usage, or requirements
+- Use previously gathered information to make questions specific
+- If budget is known, ask about features within that budget
+- If preferences are known, ask about specific stroller features matching those preferences"""
 
         response = await self.generate_response(prompt, chat_history)
         try:
             parsed = json.loads(response['text'])
             
-            # Validate that the next question relates to the original query
-            if parsed.get('next_question'):
-                relevance_check = await self.calculate_context_relevance(
-                    parsed['next_question']['question'],
-                    original_query
-                )
-                if relevance_check < 0.5:  # If question isn't relevant enough
-                    # Get the first missing required field
-                    missing_field = next((field for field in required_fields if field not in gathered_info), None)
-                    if missing_field and missing_field in RequiredFields.QUESTIONS:
-                        parsed['next_question'] = {
-                            "field": missing_field,
-                            "question": RequiredFields.QUESTIONS[missing_field]
-                        }
+            # Store any extracted information
+            if parsed.get('extracted_info'):
+                for info in parsed['extracted_info']:
+                    gathered_info[info['field']] = info['value']
+                    print(f"Stored information - Field: {info['field']}, Value: {info['value']}")
             
-            # If we have all required info, don't ask more questions
-            if required_fields and all(field in gathered_info for field in required_fields):
-                parsed['next_question'] = None
+            # Ensure the next question is stroller-specific and builds on gathered info
+            if parsed.get('next_question'):
+                question = parsed['next_question']['question']
+                budget = gathered_info.get('budget', '')
+                preferences = gathered_info.get('preferences', '')
                 
+                # Make question more specific based on gathered info
+                if budget and preferences:
+                    question = f"For a {preferences} stroller {budget}, what specific features are most important to you (e.g., folding mechanism, storage capacity, wheel type)?"
+                elif budget:
+                    question = f"Within {budget}, what specific stroller features are most important to you?"
+                elif preferences:
+                    question = f"For a {preferences} stroller, what other features do you need?"
+                
+                parsed['next_question']['question'] = question
+            
             return parsed
         except json.JSONDecodeError:
-            # Get the first missing required field
-            missing_field = next((field for field in required_fields if field not in gathered_info), None)
-            if missing_field and missing_field in RequiredFields.QUESTIONS:
-                return {
-                    "previous_field": None,
-                    "next_question": {
-                        "field": missing_field,
-                        "question": RequiredFields.QUESTIONS[missing_field]
-                    }
-                }
+            # Fallback to a stroller-specific question
             return {
-                "previous_field": None,
-                "next_question": None
+                "extracted_info": [],
+                "next_question": {
+                    "field": "stroller_requirements",
+                    "question": "What specific stroller features are most important to you (e.g., weight, folding, storage space)?"
+                }
+            }
+
+    def _extract_budget_info(self, query: str) -> Optional[str]:
+        """Extract budget information from query"""
+        words = query.split()
+        for i, word in enumerate(words):
+            if word.lower() in ['under', 'below', 'within']:
+                if i + 1 < len(words):
+                    amount = words[i + 1].replace('$', '').replace(',', '')
+                    if amount.isdigit():
+                        return f"Under ${amount}"
+        return None
+
+    def _extract_preferences(self, query: str) -> List[str]:
+        """Extract user preferences from query"""
+        preference_keywords = {
+            'lightweight': ['lightweight', 'light', 'portable'],
+            'durable': ['durable', 'sturdy', 'strong'],
+            'compact': ['compact', 'small', 'foldable'],
+            'storage': ['storage', 'space', 'capacity']
+        }
+        
+        found_preferences = []
+        query_lower = query.lower()
+        
+        for pref, keywords in preference_keywords.items():
+            if any(keyword in query_lower for keyword in keywords):
+                found_preferences.append(pref)
+                
+        return found_preferences
+
+    def _is_stroller_specific(self, question: str) -> bool:
+        """Verify question is specifically about strollers"""
+        stroller_terms = ['stroller', 'wheels', 'fold', 'push', 'recline', 'storage']
+        return any(term in question.lower() for term in stroller_terms)
+
+    def _generate_stroller_followup(self, gathered_info: Dict) -> Dict:
+        """Generate a stroller-specific follow-up question"""
+        budget = gathered_info.get('budget', '')
+        preferences = gathered_info.get('preferences', [])
+        
+        if budget and preferences:
+            return {
+                "field": "stroller_features",
+                "question": f"For a {', '.join(preferences)} stroller within {budget}, what additional features are most important (e.g., recline positions, storage capacity, wheel type)?"
+            }
+        elif budget:
+            return {
+                "field": "stroller_type",
+                "question": f"Within {budget}, what type of stroller are you looking for (e.g., lightweight, travel system, jogging stroller)?"
+            }
+        elif preferences:
+            return {
+                "field": "budget",
+                "question": f"For a {', '.join(preferences)} stroller, what is your budget range?"
+            }
+        else:
+            return {
+                "field": "stroller_requirements",
+                "question": "What are your most important requirements for the stroller (e.g., weight, folding, storage space)?"
             }
 
     async def generate_final_response(self, context: Dict, chat_history: List[Dict] = None) -> Dict:

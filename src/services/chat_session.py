@@ -21,37 +21,83 @@ class ChatSession:
         # First, try to map the response to a specific field
         field = FieldMappings.get_field_for_response(query_lower)
         
-        # Extract and store specific types of information
+        # Track the original query topic to ensure we stay focused
+        original_topic = self.context.original_query.lower() if self.context.original_query else ''
+        
+        # Extract and store specific types of information while maintaining topic focus
         if 'month' in query_lower or 'year' in query_lower:
             age_info = self._extract_age_from_query(query_lower)
             if age_info:
                 self.context.add_clarification(QuestionFields.BABY_AGE, age_info)
                 print(f"Extracted and stored age information: {age_info}")
+                # Immediately relate this back to original query
+                if original_topic:
+                    print(f"Maintaining focus on original topic: {original_topic}")
 
-        # Extract budget information
+        # Extract budget information with topic focus
         if any(term in query_lower for term in FieldMappings.BUDGET_RELATED):
             budget_info = self._extract_budget(query_lower)
             if budget_info:
                 self.context.add_clarification(QuestionFields.BUDGET, budget_info)
                 print(f"Extracted and stored budget information: {budget_info}")
+                # Validate budget info is relevant to original query
+                if original_topic:
+                    print(f"Budget information will be used in context of: {original_topic}")
 
-        # Extract sleep duration if present
+        # Extract sleep duration with context awareness
         if 'hour' in query_lower or 'hr' in query_lower:
             sleep_info = self._extract_sleep_duration(query_lower)
             if sleep_info:
                 self.context.add_clarification(QuestionFields.CURRENT_SLEEP_HOURS, sleep_info)
                 print(f"Extracted and stored sleep information: {sleep_info}")
+                # Ensure sleep info relates to original query
+                if original_topic:
+                    print(f"Sleep information will be used in context of: {original_topic}")
 
-        # Store the response field if provided
+        # Store the response field if provided, with context validation
         if response.get('previous_field'):
             mapped_field = FieldMappings.get_field_for_response(response['previous_field'])
-            self.context.add_clarification(mapped_field, query)
-            print(f"Stored answer for field {mapped_field}: {query}")
+            # Validate the field is relevant to original query
+            if self._is_field_relevant_to_query(mapped_field, original_topic):
+                self.context.add_clarification(mapped_field, query)
+                print(f"Stored relevant answer for field {mapped_field}: {query}")
+            else:
+                print(f"Warning: Field {mapped_field} may not be relevant to original query: {original_topic}")
             
-        # If this was a direct answer to a previous question, store it
+        # If this was a direct answer to a previous question, store with context check
         if self.context.get_last_field():
-            self.context.add_clarification(self.context.get_last_field(), query)
-            print(f"Stored answer for last field {self.context.get_last_field()}: {query}")
+            last_field = self.context.get_last_field()
+            if self._is_field_relevant_to_query(last_field, original_topic):
+                self.context.add_clarification(last_field, query)
+                print(f"Stored relevant answer for last field {last_field}: {query}")
+            else:
+                print(f"Warning: Last field {last_field} may not be relevant to original query: {original_topic}")
+
+    def _is_field_relevant_to_query(self, field: str, original_topic: str) -> bool:
+        """Validate if a field is relevant to the original query topic"""
+        # Map fields to relevant topics
+        field_topic_map = {
+            QuestionFields.BUDGET: ['stroller', 'gear', 'buy', 'cost', 'purchase'],
+            QuestionFields.STROLLER_TYPE: ['stroller', 'gear', 'transport'],
+            QuestionFields.STORAGE_NEEDS: ['stroller', 'gear', 'storage'],
+            QuestionFields.TERRAIN_USE: ['stroller', 'gear', 'transport'],
+            QuestionFields.BABY_AGE: ['*'],  # Age is relevant to all topics
+            QuestionFields.CURRENT_SLEEP_HOURS: ['sleep', 'routine', 'schedule'],
+            QuestionFields.SLEEP_PATTERN: ['sleep', 'routine', 'schedule'],
+            QuestionFields.HEALTH_ISSUES: ['health', 'medical', 'sleep', 'feeding']
+        }
+        
+        # If field isn't in our map, assume it's relevant
+        if field not in field_topic_map:
+            return True
+            
+        # Age is always relevant
+        if field == QuestionFields.BABY_AGE:
+            return True
+            
+        # Check if any relevant topics are in the original query
+        relevant_topics = field_topic_map.get(field, [])
+        return any(topic in original_topic for topic in relevant_topics)
 
     def _extract_age_from_query(self, query: str) -> Optional[str]:
         """Extract age information from query"""

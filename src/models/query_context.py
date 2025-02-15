@@ -1,5 +1,6 @@
 from typing import Dict, Optional, Any, List
 from src.constants import ContextFields, QuestionFields, AgentTypes, RequiredFields
+import json
 
 class QueryContext:
     def __init__(self):
@@ -16,7 +17,7 @@ class QueryContext:
             self._last_field = response['previous_field']
             
     def add_clarification(self, field: str, value: str) -> None:
-        """Add or update a clarification"""
+        """Add or update a clarification with context validation"""
         # Don't overwrite existing values unless they're empty or None
         if field not in self.gathered_info or not self.gathered_info[field]:
             self.gathered_info[field] = value
@@ -24,6 +25,52 @@ class QueryContext:
             print(f"Added new clarification - Field: {field}, Value: {value}")
         else:
             print(f"Skipped overwriting existing value - Field: {field}, Current: {self.gathered_info[field]}, New: {value}")
+        
+    def _validates_context_integrity(self, field: str, value: str) -> bool:
+        """Validate that new information maintains context integrity"""
+        if not self.original_query:
+            return True  # No context to validate against
+            
+        # Define stroller-specific validation rules
+        stroller_validation = {
+            'relevant_fields': [
+                'budget', 'stroller_type', 'storage_needs', 'terrain_use', 
+                'age', 'weight', 'preferences', 'features'
+            ],
+            'feature_mapping': {
+                'lightweight': ['weight', 'portability'],
+                'compact': ['folding', 'storage'],
+                'travel': ['portability', 'durability'],
+                'jogging': ['wheels', 'suspension'],
+                'storage': ['capacity', 'basket_size']
+            },
+            'budget_related': ['cost', 'price', 'under', 'within', 'range'],
+            'always_relevant': ['age', 'weight', 'special_needs', 'preferences']
+        }
+        
+        query_lower = self.original_query.lower()
+        if 'stroller' in query_lower:
+            # For stroller queries, strictly validate fields
+            if field in stroller_validation['always_relevant']:
+                return True
+                
+            if field in stroller_validation['relevant_fields']:
+                return True
+                
+            # Check if the field maps to a relevant stroller feature
+            value_lower = value.lower()
+            for feature, related_terms in stroller_validation['feature_mapping'].items():
+                if feature in value_lower or any(term in value_lower for term in related_terms):
+                    return True
+                    
+            # Check if it's budget related
+            if any(term in value_lower for term in stroller_validation['budget_related']):
+                return True
+                
+            print(f"Warning: Field '{field}' with value '{value}' may not be relevant to stroller query")
+            return False
+            
+        return True  # For non-stroller queries, be more permissive
         
     def get_last_field(self) -> Optional[str]:
         """Get the last field that was clarified"""
@@ -80,13 +127,11 @@ class QueryContext:
         
     def get_formatted_context(self) -> str:
         """Get a formatted string of the current context"""
-        parts = [
-            f"Query Type: {self.query_type}",
-            f"Agent Type: {self.agent_type}",
-            "Gathered Information:"
-        ]
-        
-        for field, value in self.gathered_info.items():
-            parts.append(f"  - {field}: {value}")
-            
-        return "\n".join(parts) 
+        return f"""Original Query: {self.original_query}
+
+Current conversation context:
+- Query Type: {self.query_type}
+- Agent Type: {self.agent_type}
+
+Information gathered so far:
+{json.dumps(self.gathered_info, indent=2)}""" 
