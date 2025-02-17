@@ -3,9 +3,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, PlainTextResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-import asyncio
-from typing import List, Dict
-import uvicorn
+from typing import Dict
 import sys
 from pathlib import Path
 import os
@@ -50,20 +48,25 @@ agent_factory = None
 
 @app.on_event("startup")
 async def startup_event():
-    # Initialize DB
-    db = DatabaseManager()
-    db.create_tables()
-    
-    # Validate config
-    Config.validate()
-    
-    # Initialize services
-    global llm_service, agent_factory
-    llm_service = LLMService(
-        api_key=os.getenv('OPENAI_API_KEY'),
-        model=os.getenv('MODEL_NAME', 'gpt-4')
-    )
-    agent_factory = AgentFactory(llm_service)
+    try:
+        # Initialize DB
+        db = DatabaseManager()
+        db.create_tables()
+        
+        # Validate config
+        Config.validate()
+        
+        # Initialize services
+        global llm_service, agent_factory
+        llm_service = LLMService(
+            api_key=os.getenv('OPENAI_API_KEY'),
+            model=os.getenv('MODEL_NAME', 'gpt-4')
+        )
+        agent_factory = AgentFactory(llm_service)
+        print("Startup completed successfully")
+    except Exception as e:
+        print(f"Error during startup: {str(e)}")
+        raise
 
 class ChatMessage(BaseModel):
     message: str
@@ -71,17 +74,25 @@ class ChatMessage(BaseModel):
 
 @app.get("/")
 async def read_root():
-    index_path = static_dir / "index.html"
-    if not index_path.exists():
-        return PlainTextResponse("Welcome to Babywise Assistant API")
-    return FileResponse(str(index_path))
+    try:
+        index_path = static_dir / "index.html"
+        if not index_path.exists():
+            return PlainTextResponse("Welcome to Babywise Assistant API")
+        return FileResponse(str(index_path))
+    except Exception as e:
+        print(f"Error serving root: {str(e)}")
+        return PlainTextResponse("Error loading page")
 
 @app.get("/favicon.ico")
 async def favicon():
-    favicon_path = static_dir / "favicon.ico"
-    if not favicon_path.exists():
-        return PlainTextResponse("")  # Return empty response if favicon doesn't exist
-    return FileResponse(str(favicon_path))
+    try:
+        favicon_path = static_dir / "favicon.ico"
+        if not favicon_path.exists():
+            return PlainTextResponse("")
+        return FileResponse(str(favicon_path))
+    except Exception as e:
+        print(f"Error serving favicon: {str(e)}")
+        return PlainTextResponse("")
 
 @app.post("/chat")
 async def chat(message: ChatMessage) -> Dict:
