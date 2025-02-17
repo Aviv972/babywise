@@ -105,22 +105,29 @@ async def favicon():
 async def chat(message: ChatMessage) -> Dict:
     """Process chat messages with enhanced error handling and response tracking"""
     logger = logging.getLogger(__name__)
-    logger.info("\n=== Processing Chat Request ===")
+    logger.info("\n=== Starting Chat Request Processing ===")
     
     try:
-        logger.info(f"Message: {message.message}")
+        # Log the incoming message
+        logger.info(f"Received message: {message.message}")
         logger.info(f"Session ID: {message.session_id}")
 
-        # Log environment status
-        logger.info("=== Environment Check ===")
+        # Log service status
+        logger.info("=== Service Status Check ===")
+        logger.info(f"LLM Service initialized: {bool(llm_service)}")
+        logger.info(f"Agent Factory initialized: {bool(agent_factory)}")
+        logger.info(f"Active chat sessions: {len(chat_sessions)}")
+
+        # Log environment variables
+        logger.info("=== Environment Variables ===")
         env_vars = {
-            'OPENAI_API_KEY': os.getenv('OPENAI_API_KEY', '').startswith('sk-'),
-            'PERPLEXITY_API_KEY': os.getenv('PERPLEXITY_API_KEY', '').startswith('pplx-'),
-            'MODEL_NAME': os.getenv('MODEL_NAME'),
-            'PYTHONPATH': os.getenv('PYTHONPATH'),
+            'OPENAI_API_KEY': bool(os.getenv('OPENAI_API_KEY')),
+            'PERPLEXITY_API_KEY': bool(os.getenv('PERPLEXITY_API_KEY')),
+            'MODEL_NAME': os.getenv('MODEL_NAME', 'gpt-4'),
+            'PYTHONPATH': os.getenv('PYTHONPATH')
         }
         for var, value in env_vars.items():
-            logger.info(f"{var}: {'Present' if value else 'Missing'}")
+            logger.info(f"{var}: {value}")
 
         # Get or create chat session
         if message.session_id not in chat_sessions:
@@ -129,36 +136,43 @@ async def chat(message: ChatMessage) -> Dict:
                 logger.error("Agent factory not initialized!")
                 raise RuntimeError("Chat service not properly initialized")
             chat_sessions[message.session_id] = ChatSession(agent_factory)
+            logger.info("New chat session created successfully")
+        else:
+            logger.info("Using existing chat session")
         
         session = chat_sessions[message.session_id]
-        logger.info("Chat session retrieved successfully")
 
         # Process the message
         try:
-            logger.info("Processing message through chat session...")
+            logger.info("=== Processing Message ===")
+            logger.info("Sending message to chat session for processing...")
             response = await session.process_query(message.message)
             
             if not response:
-                logger.warning("Empty response received")
+                logger.warning("Empty response received from chat session")
                 return {
                     'type': ResponseTypes.ERROR,
                     'text': "I apologize, but I couldn't generate a response. Could you please rephrase your question?"
                 }
             
             if not isinstance(response, dict) or 'text' not in response:
-                logger.warning(f"Invalid response format: {response}")
+                logger.warning(f"Invalid response format received: {response}")
                 return {
                     'type': ResponseTypes.ERROR,
                     'text': "I encountered an issue processing your request. Could you please provide more details about what you're looking for?"
                 }
             
-            logger.info(f"Response generated successfully: {response.get('type', 'unknown type')}")
+            logger.info(f"Response generated successfully - Type: {response.get('type', 'unknown')}")
+            logger.info(f"Response text length: {len(response.get('text', ''))}")
             return response
 
         except Exception as session_error:
-            logger.error(f"Error in chat session: {str(session_error)}", exc_info=True)
-            error_type = type(session_error).__name__
+            logger.error("=== Session Processing Error ===")
+            logger.error(f"Error type: {type(session_error).__name__}")
+            logger.error(f"Error message: {str(session_error)}")
+            logger.error("Full traceback:", exc_info=True)
             
+            error_type = type(session_error).__name__
             if 'API' in error_type:
                 return {
                     'type': ResponseTypes.ERROR,
@@ -176,11 +190,16 @@ async def chat(message: ChatMessage) -> Dict:
                 }
 
     except Exception as e:
-        logger.error("Critical server error", exc_info=True)
+        logger.error("=== Critical Server Error ===")
+        logger.error(f"Error type: {type(e).__name__}")
+        logger.error(f"Error message: {str(e)}")
+        logger.error("Full traceback:", exc_info=True)
         return {
             'type': ResponseTypes.ERROR,
             'text': "I apologize, but I'm experiencing technical difficulties. Please try again in a moment."
         }
+    finally:
+        logger.info("=== Chat Request Processing Complete ===\n")
 
 @app.get("/health")
 async def health_check() -> Dict:

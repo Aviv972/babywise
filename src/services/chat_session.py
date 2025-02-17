@@ -14,6 +14,7 @@ from src.models.query_context import QueryContext
 from datetime import datetime
 import json
 import re
+import logging
 
 class ChatSession:
     def __init__(self, agent_factory: AgentFactory):
@@ -24,7 +25,8 @@ class ChatSession:
         self.current_agent = None
         # Initialize a new conversation in the database
         self.conversation_id = self.db.create_conversation()
-        print(f"Created new conversation with ID: {self.conversation_id}")
+        self.logger = logging.getLogger(__name__)
+        self.logger.info(f"Created new chat session with ID: {self.conversation_id}")
 
     def _process_answer(self, query: str, response: Dict) -> None:
         """Process and store the answer in the context"""
@@ -188,48 +190,32 @@ class ChatSession:
     async def process_query(self, query: str) -> Dict:
         """Process a query with enhanced context management"""
         try:
-            print("\n=== Processing Chat Query ===")
-            print(f"Query: {query}")
+            self.logger.info("\n=== Processing Query in Chat Session ===")
+            self.logger.info(f"Query: {query}")
 
             # Initialize context dictionary if not exists
             if not hasattr(self, 'context'):
+                self.logger.info("Initializing new context")
                 self.context = {
                     'original_query': query,
                     'gathered_info': {},
                     'conversation_history': [],
                     'agent_type': None,
-                    'product_category': None  # Add product category tracking
+                    'product_category': None
                 }
             
             # Store original query if this is the first message
             if not self.context.get('original_query'):
+                self.logger.info("Setting original query")
                 self.context['original_query'] = query
 
-            # Determine product category from query
-            product_categories = {
-                'car_seat': ['car seat', 'carseat', 'car safety', 'infant seat', 'booster seat', 'convertible seat'],
-                'stroller': ['stroller', 'pushchair', 'pram', 'buggy', 'travel system'],
-                'carrier': ['carrier', 'baby wrap', 'sling', 'baby wearing'],
-                'furniture': ['crib', 'bassinet', 'changing table', 'playpen']
-            }
-            
-            query_lower = query.lower()
-            for category, keywords in product_categories.items():
-                if any(keyword in query_lower for keyword in keywords):
-                    self.context['product_category'] = category
-                    print(f"Detected product category: {category}")
-                    break
-
-            # Determine agent type based on query content
-            if not self.context.get('agent_type'):
-                self.context['agent_type'] = self._determine_agent_type(query)
-                print(f"Selected agent type: {self.context['agent_type']}")
-
             # Get appropriate agent
-            agent = await self.agent_factory.get_agent_for_query(query, self.context['agent_type'])
-            print(f"Using agent: {agent.__class__.__name__}")
+            self.logger.info("Getting appropriate agent for query...")
+            agent = await self.agent_factory.get_agent_for_query(query, self.context.get('agent_type'))
+            self.logger.info(f"Selected agent: {agent.__class__.__name__}")
 
             # Process query with full context
+            self.logger.info("Processing query with agent...")
             response = await agent.process_query(
                 query=query,
                 context=self.context,
@@ -237,6 +223,7 @@ class ChatSession:
             )
 
             # Update conversation history
+            self.logger.info("Updating conversation history...")
             self.context['conversation_history'].append({
                 'role': 'user',
                 'content': query,
@@ -248,14 +235,18 @@ class ChatSession:
                     'role': 'assistant',
                     'content': response['text'],
                     'timestamp': datetime.now().isoformat(),
-                    'product_category': self.context.get('product_category')  # Include product category in history
+                    'product_category': self.context.get('product_category')
                 })
+                self.logger.info("Conversation history updated successfully")
 
-            print(f"Response type: {response.get('type', 'unknown')}")
+            self.logger.info(f"Query processing complete. Response type: {response.get('type', 'unknown')}")
             return response
 
         except Exception as e:
-            print(f"Error in chat session: {str(e)}")
+            self.logger.error("=== Error in Chat Session ===")
+            self.logger.error(f"Error type: {type(e).__name__}")
+            self.logger.error(f"Error message: {str(e)}")
+            self.logger.error("Full traceback:", exc_info=True)
             return {
                 'type': ResponseTypes.ERROR,
                 'text': "I apologize, but I encountered an error. Could you please rephrase your question?"
@@ -532,7 +523,7 @@ class ChatSession:
         self.conversation_history = []
         # Create a new conversation in the database
         self.conversation_id = self.db.create_conversation()
-        print(f"Reset session: Created new conversation with ID: {self.conversation_id}")
+        self.logger.info(f"Reset session: Created new conversation with ID: {self.conversation_id}")
 
     def get_state(self) -> Dict:
         """Get current session state"""
