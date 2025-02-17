@@ -168,8 +168,4 @@ async def clear_session(session_id: str) -> Dict:
     if session_id in chat_sessions:
         chat_sessions[session_id].reset()
         return {"status": "cleared"}
-    return {"status": "not_found"}
-
-# For local development only
-if __name__ == "__main__":
-    uvicorn.run("server:app", host="0.0.0.0", port=8004, reload=True) 
+    return {"status": "not_found"} 
