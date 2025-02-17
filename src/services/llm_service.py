@@ -3,12 +3,32 @@ from typing import Dict, Any, Optional, List
 from src.config import Config
 from src.constants import ContextFields, MessageRoles, ResponseTypes, QuestionFields, RequiredFields, AgentTypes
 import json
+import os
+from dotenv import load_dotenv
 
 class LLMService:
     def __init__(self, api_key: str = None, model: str = None):
-        self.api_key = api_key or Config.OPENAI_API_KEY
-        self.model = model or Config.MODEL_NAME
-        self.client = AsyncOpenAI(api_key=self.api_key)
+        load_dotenv()  # Ensure environment variables are loaded
+        self.openai_api_key = api_key or os.getenv('OPENAI_API_KEY')
+        self.perplexity_api_key = os.getenv('PERPLEXITY_API_KEY')
+        self.model = model or os.getenv('MODEL_NAME', 'gpt-4')
+        
+        if not self.openai_api_key:
+            raise ValueError("OpenAI API key is required")
+            
+        print(f"Initializing LLM Service with model: {self.model}")
+        self.openai_client = AsyncOpenAI(api_key=self.openai_api_key)
+        
+        # Initialize Perplexity client if key is available
+        if self.perplexity_api_key:
+            self.perplexity_client = AsyncOpenAI(
+                api_key=self.perplexity_api_key,
+                base_url="https://api.perplexity.ai"
+            )
+        else:
+            self.perplexity_client = None
+            print("Warning: Perplexity API key not found. Some features may be limited.")
+
         self.system_prompt = """You are a parenting expert assistant.
             CRITICAL INSTRUCTIONS FOR CONTEXT MAINTENANCE:
             1. The original query is your PRIMARY FOCUS - never lose sight of it
@@ -50,50 +70,178 @@ class LLMService:
             3. Specific and actionable
             4. Structured and clear."""
 
-    def merge_context(self, original_query: str, gathered_info: Dict, current_query: str) -> str:
-        return f"""Original Query: {original_query}
+    def _should_use_perplexity(self, prompt: str, context: Dict = None) -> bool:
+        """Determine if we should use Perplexity API based on query content."""
+        print("\n=== Perplexity Trigger Analysis ===")
+        print(f"Analyzing query: {prompt}")
         
-        Clarifications collected so far:
+        if not context:
+            print("❌ No context provided")
+            return False
+
+        # Comprehensive list of baby product types
+        product_types = [
+            # Transportation
+            'stroller', 'twin_stroller', 'car_seat', 'baby_carrier', 'baby_wrap', 'travel_system',
+            
+            # Sleep and Nursery
+            'crib', 'bassinet', 'cradle', 'co_sleeper', 'playpen', 'pack_n_play', 'baby_monitor',
+            'crib_mattress', 'bedding', 'sleep_sack', 'swaddle', 'night_light', 'white_noise',
+            
+            # Feeding
+            'breast_pump', 'bottle', 'bottle_warmer', 'sterilizer', 'nursing_pillow', 'high_chair',
+            'booster_seat', 'feeding_set', 'sippy_cup', 'baby_food_maker',
+            
+            # Diapering
+            'changing_table', 'diaper_pail', 'diaper_bag', 'wipe_warmer', 'diaper_caddy',
+            
+            # Bath and Grooming
+            'baby_bathtub', 'bath_seat', 'grooming_kit', 'baby_towel', 'bath_toys',
+            'baby_toiletries', 'bath_thermometer',
+            
+            # Safety
+            'baby_gate', 'cabinet_lock', 'outlet_cover', 'corner_guard', 'baby_fence',
+            'safety_harness', 'anti_tip_strap',
+            
+            # Play and Development
+            'play_mat', 'activity_gym', 'bouncer', 'swing', 'jumper', 'walker',
+            'activity_center', 'play_yard', 'educational_toys',
+            
+            # Clothing and Accessories
+            'baby_clothes', 'shoes', 'mittens', 'bibs', 'burp_cloths', 'baby_blanket',
+            
+            # Health and Comfort
+            'humidifier', 'air_purifier', 'thermometer', 'nasal_aspirator', 'medicine_dispenser',
+            'teething_toys'
+        ]
+
+        # Check if this is a product recommendation query
+        query_lower = prompt.lower()
+        
+        # Enhanced product type detection with specific categories
+        product_categories = {
+            'car_seat': ['car seat', 'carseat', 'car safety', 'infant seat', 'booster seat', 'convertible seat'],
+            'stroller': ['stroller', 'pushchair', 'pram', 'buggy', 'travel system'],
+            'carrier': ['carrier', 'baby wrap', 'sling', 'baby wearing'],
+            'furniture': ['crib', 'bassinet', 'changing table', 'playpen']
+        }
+        
+        # Determine specific product category
+        product_category = None
+        for category, keywords in product_categories.items():
+            if any(keyword in query_lower for keyword in keywords):
+                product_category = category
+                break
+                
+        product_type_match = bool(product_category)
+        print(f"Product type in query? {product_type_match} (Category: {product_category})")
+        
+        purchase_intent = any(word in query_lower for word in [
+            'recommend', 'product', 'price', 'cost', 'buy', 'purchase',
+            'brand', 'model', 'compare', 'versus', 'vs', 'best',
+            'affordable', 'expensive', 'cheap', 'quality', 'review',
+            'where to get', 'shop', 'store', 'online', 'retail'
+        ])
+        print(f"Purchase intent detected? {purchase_intent}")
+        
+        is_product_query = product_type_match or purchase_intent
+        print(f"Final product query determination: {is_product_query}")
+
+        # Check if we need real-time information
+        has_budget = 'budget' in context.get('gathered_info', {})
+        print(f"Has budget in context? {has_budget}")
+        
+        real_time_keywords = any(word in query_lower for word in [
+            'latest', 'current', 'market', 'available', 'new',
+            'price', 'cost', 'deal', 'sale', 'discount',
+            'today', 'now', 'stock', 'inventory', 'shipping'
+        ])
+        print(f"Real-time keywords detected? {real_time_keywords}")
+        
+        needs_real_time = has_budget or real_time_keywords
+        print(f"Needs real-time info? {needs_real_time}")
+
+        should_use = is_product_query and needs_real_time
+        print(f"\nFinal decision - Use Perplexity? {should_use}")
+        
+        if should_use:
+            print("✅ Will attempt to use Perplexity API")
+        else:
+            print("❌ Will use OpenAI instead")
+            print("Reason:", end=" ")
+            if not is_product_query:
+                print("Not a product query")
+            elif not needs_real_time:
+                print("No real-time information needed")
+
+        # Store the product category in context if available
+        if context and product_category:
+            context['product_category'] = product_category
+
+        return should_use
+
+    def merge_context(self, original_query: str, gathered_info: Dict, current_query: str) -> str:
+        """Merge all context information into a comprehensive prompt"""
+        return f"""CONVERSATION CONTEXT:
+        Original Query: {original_query}
+        
+        Information gathered so far:
         {json.dumps(gathered_info, indent=2)}
         
-        Current Input: "{current_query}"
+        Current Query: "{current_query}"
+        
+        IMPORTANT REMINDERS:
+        1. Always relate your response back to the original query
+        2. Use ALL gathered information
+        3. Stay focused on the original topic
+        4. If asking follow-up questions, they must be relevant to the original query
         """
 
-    async def generate_response(self, prompt: str, chat_history: List[Dict] = None) -> Dict:
+    async def generate_response(self, prompt: str, chat_history: List[Dict] = None, context: Dict = None) -> Dict:
+        """Generate a response using OpenAI API with enhanced context awareness"""
         try:
-            messages = [
-                {"role": MessageRoles.SYSTEM, "content": self.system_prompt}
-            ]
+            print("\n=== OpenAI Response Generation ===")
+            print(f"Context available: {bool(context)}")
             
+            # Build messages array with enhanced context
+            messages = [{"role": "system", "content": self.system_prompt}]
+            
+            # Add context if available
+            if context:
+                context_str = f"""Current context:
+                Original Query: {context.get('original_query', 'Not provided')}
+                Agent Type: {context.get('agent_type', 'Not specified')}
+                Gathered Information: {json.dumps(context.get('gathered_info', {}), indent=2)}
+                """
+                messages.append({"role": "system", "content": context_str})
+
+            # Add relevant chat history if available
             if chat_history:
-                messages.extend([
-                    {
-                        "role": msg['role'],
-                        "content": msg['content']
-                    }
-                    for msg in chat_history[-10:]
-                ])
+                for msg in chat_history[-3:]:  # Include last 3 messages for context
+                    messages.append({
+                        "role": msg.get('role', 'user'),
+                        "content": msg.get('content', '')
+                    })
 
-            messages.append({"role": MessageRoles.USER, "content": prompt})
+            # Add the current prompt
+            messages.append({"role": "user", "content": prompt})
 
-            response = await self.client.chat.completions.create(
+            print("Sending request to OpenAI with enhanced context...")
+            response = await self.openai_client.chat.completions.create(
                 model=self.model,
-                messages=messages
+                messages=messages,
+                temperature=0.7,
+                max_tokens=1000
             )
             
-            return {
-                "type": ResponseTypes.ANSWER,
-                "text": str(response.choices[0].message.content),
-                "role": MessageRoles.MODEL
-            }
+            if not response.choices or not response.choices[0].message:
+                raise ValueError("No valid response from OpenAI API")
+
+            return {'text': response.choices[0].message.content}
 
         except Exception as e:
-            print(f"Error in LLMService: {str(e)}")
-            return {
-                "type": ResponseTypes.ERROR,
-                "text": "Error connecting to LLM service",
-                "role": MessageRoles.MODEL
-            }
+            print(f"Error in OpenAI response generation: {str(e)}")
+            raise
 
     def _prepare_prompt(self, prompt: str, context: Dict) -> str:
         if not context or not context.get('context_gathered'):
@@ -131,95 +279,34 @@ class LLMService:
         NEXT QUESTIONS MUST RELATE TO THE ORIGINAL QUERY."""
 
     async def analyze_query_intent(self, query: str, context: Dict, chat_history: List[Dict] = None) -> Dict:
-        gathered_info = context[ContextFields.GATHERED_INFO]
-        original_query = context[ContextFields.ORIGINAL_QUERY]
-        
-        # Format chat history for better context
-        formatted_history = ""
-        if chat_history:
-            formatted_history = "\nPrevious conversation:\n"
-            for msg in chat_history[-5:]:
-                role = "User" if msg['role'] == MessageRoles.USER else "Assistant"
-                formatted_history += f"{role}: {msg['content']}\n"
-        
-        # Build stroller-specific context-aware prompt
-        prompt = f"""STROLLER RECOMMENDATION TASK:
-
-Original Query: {original_query}
-{formatted_history}
-Current User Input: "{query}"
-
-Information gathered so far:
-{json.dumps(gathered_info, indent=2)}
-
-Based on the ORIGINAL QUERY about finding a stroller and the current conversation:
-1. Extract any new information about:
-   - Budget (e.g., numbers with $ or price mentions)
-   - Preferences (e.g., lightweight, easy transport)
-   - Use case (e.g., travel, daily walks)
-   - Baby's age/weight
-2. Generate a specific follow-up question about missing stroller details
-
-Return JSON:
-{{
-    "extracted_info": [
-        {{
-            "field": "budget",
-            "value": "under $400"  # Example
-        }},
-        {{
-            "field": "preferences",
-            "value": "lightweight, easy transport"  # Example
-        }}
-    ],
-    "next_question": {{
-        "field": "stroller_features",
-        "question": "specific_stroller_related_question"
-    }}
-}}
-
-IMPORTANT: 
-- Every question MUST be about stroller features, usage, or requirements
-- Use previously gathered information to make questions specific
-- If budget is known, ask about features within that budget
-- If preferences are known, ask about specific stroller features matching those preferences"""
-
-        response = await self.generate_response(prompt, chat_history)
         try:
-            parsed = json.loads(response['text'])
-            
-            # Store any extracted information
-            if parsed.get('extracted_info'):
-                for info in parsed['extracted_info']:
-                    gathered_info[info['field']] = info['value']
-                    print(f"Stored information - Field: {info['field']}, Value: {info['value']}")
-            
-            # Ensure the next question is stroller-specific and builds on gathered info
-            if parsed.get('next_question'):
-                question = parsed['next_question']['question']
-                budget = gathered_info.get('budget', '')
-                preferences = gathered_info.get('preferences', '')
-                
-                # Make question more specific based on gathered info
-                if budget and preferences:
-                    question = f"For a {preferences} stroller {budget}, what specific features are most important to you (e.g., folding mechanism, storage capacity, wheel type)?"
-                elif budget:
-                    question = f"Within {budget}, what specific stroller features are most important to you?"
-                elif preferences:
-                    question = f"For a {preferences} stroller, what other features do you need?"
-                
-                parsed['next_question']['question'] = question
-            
-            return parsed
-        except json.JSONDecodeError:
-            # Fallback to a stroller-specific question
+            # Simplified analysis that always returns an empty result
             return {
                 "extracted_info": [],
-                "next_question": {
-                    "field": "stroller_requirements",
-                    "question": "What specific stroller features are most important to you (e.g., weight, folding, storage space)?"
-                }
+                "next_question": None
             }
+        except Exception as e:
+            print(f"Error in analyze_query_intent: {str(e)}")
+            return {
+                "extracted_info": [],
+                "next_question": None
+            }
+
+    def _format_history_with_context(self, chat_history: List[Dict]) -> str:
+        """Format chat history with context information"""
+        if not chat_history:
+            return ""
+            
+        formatted_msgs = []
+        for msg in chat_history[-5:]:  # Last 5 messages for conciseness
+            context_snapshot = msg.get('context_snapshot', {})
+            formatted_msg = f"""
+            {msg['role'].capitalize()}: {msg['content']}
+            Context: {json.dumps(context_snapshot.get('gathered_info', {}), indent=2)}
+            """
+            formatted_msgs.append(formatted_msg)
+            
+        return "\nConversation History:\n" + "\n".join(formatted_msgs)
 
     def _extract_budget_info(self, query: str) -> Optional[str]:
         """Extract budget information from query"""
@@ -463,4 +550,208 @@ IMPORTANT:
         try:
             return json.loads(response['text'])
         except:
-            return [] 
+            return []
+
+    async def evaluate_context(self, prompt: str) -> str:
+        """Evaluate if current context is sufficient for a meaningful response"""
+        try:
+            response = await self.client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": "You are a context evaluation assistant. Your task is to determine if there is sufficient context to provide a meaningful response. Return ONLY 'true' or 'false'."
+                    },
+                    {
+                        "role": "user",
+                        "content": prompt
+                    }
+                ],
+                temperature=0.1  # Low temperature for more consistent evaluation
+            )
+            return response.choices[0].message.content.strip().lower()
+        except Exception as e:
+            print(f"Error evaluating context: {str(e)}")
+            return 'false'  # Default to needing more context on error
+
+    def _needs_medical_disclaimer(self, query: str) -> bool:
+        """Check if the query needs a medical disclaimer"""
+        health_keywords = [
+            'health', 'medical', 'sick', 'symptoms', 'pain', 'doctor',
+            'depression', 'anxiety', 'mental', 'stress', 'postpartum',
+            'baby blues', 'medication', 'treatment', 'diagnosis',
+            'fever', 'infection', 'disease', 'condition', 'therapy'
+        ]
+        return any(keyword in query.lower() for keyword in health_keywords)
+
+    def _add_medical_disclaimer(self, response: str) -> str:
+        """Add a medical disclaimer to the response"""
+        disclaimer = (
+            "⚠️ Important: I want to clarify that I'm not a medical professional. "
+            "This information is for educational purposes only. "
+            "For medical advice, diagnosis, or treatment, please consult with your healthcare provider.\n\n"
+        )
+        return disclaimer + response 
+
+    async def generate_perplexity_response(self, query: str, context: Dict) -> Dict:
+        """Generate a response using Perplexity API for real-time product information."""
+        try:
+            print("\n=== Perplexity Response Generation ===")
+            # Extract context information
+            gathered_info = context.get('gathered_info', {})
+            budget = gathered_info.get('budget', 'Not specified')
+            preferences = gathered_info.get('preferences', [])
+            usage = gathered_info.get('usage', '')
+
+            print(f"Budget: {budget}")
+            print(f"Preferences: {preferences}")
+            print(f"Usage: {usage}")
+
+            # Create enhanced prompt for product recommendations
+            product_category = context.get('product_category', 'general')
+            
+            if product_category == 'car_seat':
+                enhanced_prompt = f"""You are a knowledgeable baby product expert. Please provide current market information and recommendations for this car seat query: {query}
+
+Requirements:
+- Budget: {budget}
+- Preferences: {', '.join(preferences) if preferences else 'Not specified'}
+- Usage: {usage}
+
+Provide your response in this EXACT format:
+
+👋 [Friendly greeting]
+
+🛡️ Safety First:
+- Latest safety ratings and certifications
+- Key safety features to look for
+- Installation considerations
+
+🏆 Top Recommendation: [Product Name]
+💰 Price: [Current exact price]
+✨ Key Features:
+- [Safety Feature 1]
+- [Safety Feature 2]
+- [Comfort/Convenience Feature]
+
+🔍 Safety Certifications:
+- [List relevant safety certifications]
+- [Crash test ratings if available]
+
+🛍️ Where to Buy:
+- [Store/Website 1]
+- [Store/Website 2]
+
+💡 Why This Choice:
+[2-3 sentences explaining safety features and value]
+
+🌟 Alternative Option: [Second Product]
+[Follow same safety-focused format as above]
+
+⚠️ Important Safety Notes:
+- [Key safety consideration 1]
+- [Key safety consideration 2]
+- [Installation tip]
+
+🤔 Need more help?
+[One relevant follow-up question about specific needs]
+
+Remember to emphasize that proper installation and use are crucial for car seat safety."""
+            elif product_category == 'stroller':
+                enhanced_prompt = f"""You are a knowledgeable baby product expert. Please provide current market information and recommendations for this stroller query: {query}
+
+Requirements:
+- Budget: {budget}
+- Preferences: {', '.join(preferences) if preferences else 'Not specified'}
+- Usage: {usage}
+
+Provide your response in this EXACT format:
+
+👋 [Friendly greeting]
+
+🏆 Top Pick: [Product Name]
+💰 Price: [Current exact price]
+✨ Key Features:
+- [Mobility Feature]
+- [Comfort Feature]
+- [Storage/Convenience Feature]
+
+🛍️ Where to Buy:
+- [Store/Website 1]
+- [Store/Website 2]
+
+💡 Why This Choice:
+[2-3 sentences explaining why this matches their needs]
+
+🌟 Alternative Option: [Second Product]
+[Follow same format as above]
+
+🤔 Need more help?
+[One relevant follow-up question about their needs]"""
+            else:
+                # Default product template
+                enhanced_prompt = f"""You are a knowledgeable baby product expert. Please provide current market information and recommendations for this query: {query}
+
+Requirements:
+- Budget: {budget}
+- Preferences: {', '.join(preferences) if preferences else 'Not specified'}
+- Usage: {usage}
+
+Provide your response in this EXACT format:
+
+👋 [Friendly greeting]
+
+🏆 Top Recommendation: [Product Name]
+💰 Price: [Current exact price]
+✨ Key Features:
+- [Feature 1]
+- [Feature 2]
+- [Feature 3]
+
+🛍️ Where to Buy:
+- [Store/Website 1]
+- [Store/Website 2]
+
+💡 Why This Choice:
+[2-3 sentences explaining why this matches their needs]
+
+🌟 Alternative Option: [Second Product]
+[Follow same format as above]
+
+🤔 Need more help?
+[One relevant follow-up question about their needs]"""
+
+            print("Sending enhanced prompt to Perplexity...")
+            
+            # Determine which model to use based on query type
+            if any(term in query.lower() for term in ['compare', 'difference', 'better', 'pros and cons', 'vs', 'versus']):
+                # Use llama-3-70b-chat for comparison queries (replacing sonar-reasoning)
+                print("Using llama-3-70b-chat for comparison query...")
+                model = "llama-3-70b-chat"
+            else:
+                # Use llama-3-34b-chat for general product queries (replacing sonar-medium-chat)
+                print("Using llama-3-34b-chat for product information...")
+                model = "llama-3-34b-chat"
+
+            response = await self.perplexity_client.chat.completions.create(
+                model=model,
+                messages=[
+                    {"role": "system", "content": "You are a knowledgeable baby product expert providing current market recommendations with accurate pricing and availability information."},
+                    {"role": "user", "content": enhanced_prompt}
+                ],
+                temperature=0.7
+            )
+
+            if not response.choices or not response.choices[0].message:
+                raise ValueError("No valid response from Perplexity API")
+
+            return {
+                'type': ResponseTypes.ANSWER,
+                'text': response.choices[0].message.content
+            }
+
+        except Exception as e:
+            print(f"Error in Perplexity response generation: {str(e)}")
+            # Fallback to OpenAI if Perplexity fails
+            print("Falling back to OpenAI for response...")
+            return await self.generate_response(query, context=context) 

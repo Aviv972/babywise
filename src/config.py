@@ -2,6 +2,7 @@ import os
 from dotenv import load_dotenv
 from pathlib import Path
 import base64
+from enum import Enum
 
 class Config:
     # Load environment variables
@@ -43,4 +44,11 @@ class Config:
             raise ValueError("Invalid Perplexity API key format")
         
         print("Environment variables loaded successfully")
-        print(f"Using model: {cls.MODEL_NAME}") 
+        print(f"Using model: {cls.MODEL_NAME}")
+
+class ResponseTypes(Enum):
+    """Enum for different types of responses"""
+    ANSWER = "answer"
+    ERROR = "error"
+    FOLLOW_UP = "follow_up"
+    CLARIFICATION = "clarification" 

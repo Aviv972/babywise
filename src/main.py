@@ -1,13 +1,16 @@
-import asyncio
-from agent_manager import AgentManager
-from agents.pregnancy_agent import PregnancyAgent
-from services.llm_service import OpenAIService
-from config import Config
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from src.middleware.debug import DebugMiddleware
+from src.config import Config
+from src.routes import chat
+from src.services.service_container import container
 
-app = FastAPI()
+# Initialize the FastAPI app
+app = FastAPI(
+    title="Babywise API",
+    description="API for the Babywise parenting assistant chatbot",
+    version="1.0.0"
+)
 
 # Add debug middleware first
 app.add_middleware(DebugMiddleware)
@@ -21,49 +24,25 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Include routers
-from src.routes import chat
-app.include_router(chat.router)
+# Include routers with dependencies
+app.include_router(
+    chat.router,
+    prefix="/chat",
+    tags=["chat"]
+)
 
-async def main():
-    # Load and validate configuration
-    Config.validate()
-    
-    # Initialize LLM service securely
-    llm_service = OpenAIService(
-        api_key=Config.get_api_key(),
-        model=Config.OPENAI_MODEL
-    )
-    
-    # Initialize the agent manager
-    manager = AgentManager()
-    
-    # Register agents
-    pregnancy_agent = PregnancyAgent(llm_service=llm_service)
-    manager.register_agent(pregnancy_agent)
-    
-    # Start a conversation
-    pregnancy_agent.start_conversation(user_id="test_user")
-    
-    # Example usage
-    queries = [
-        "What helps with morning sickness?",
-        "When should I get my first ultrasound?",
-        "How do I prepare for labor?"
-    ]
-    
-    for query in queries:
-        response = await manager.process_query(query)
-        print(f"Q: {query}")
-        print(f"A: {response}\n")
-    
-    # Show conversation history
-    print("Recent conversation history:")
-    history = pregnancy_agent.get_recent_context()
-    for msg in history:
-        print(f"Time: {msg['timestamp']}")
-        print(f"Q: {msg['query']}")
-        print(f"A: {msg['response']}\n")
+@app.on_event("startup")
+async def startup_event():
+    """Initialize services on startup"""
+    print("Starting Babywise API...")
+    print(f"Using model: {Config.MODEL_NAME}")
+    print("Services initialized successfully")
 
-if __name__ == "__main__":
-    asyncio.run(main()) 
+@app.get("/")
+async def root():
+    """Root endpoint for API health check"""
+    return {
+        "status": "healthy",
+        "service": "Babywise API",
+        "version": "1.0.0"
+    }

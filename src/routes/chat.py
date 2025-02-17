@@ -1,41 +1,90 @@
-from fastapi import APIRouter, HTTPException, Response
+from fastapi import APIRouter, HTTPException, Depends
 from src.models.chat import ChatMessage, ChatResponse
 from src.services.chat_session import ChatSession
-from src.services.agent_factory import AgentFactory
-from src.services.llm_service import LLMService
 from fastapi.responses import JSONResponse
-from fastapi.encoders import jsonable_encoder
-import json
+from typing import Dict
+from src.services.service_container import container
 
 router = APIRouter()
-llm_service = LLMService()
-agent_factory = AgentFactory(llm_service)
-chat_sessions = {}
 
-@router.post("/chat")
-async def chat(request: ChatMessage):
+# Store chat sessions
+chat_sessions: Dict[str, ChatSession] = {}
+
+async def get_chat_session() -> ChatSession:
+    """Get or create a chat session"""
+    if "manager" not in chat_sessions:
+        print("Initializing new chat session...")
+        chat_sessions["manager"] = ChatSession(container.agent_factory)
+    return chat_sessions["manager"]
+
+@router.post("/")
+async def chat(
+    request: ChatMessage,
+    chat_session: ChatSession = Depends(get_chat_session)
+) -> JSONResponse:
+    """
+    Process a chat message with context management
+    """
     try:
-        if "manager" not in chat_sessions:
-            print("Initializing new chat session...")
-            chat_sessions["manager"] = ChatSession(agent_factory)
+        print(f"\n=== Received Message ===\n{request.message}")
         
-        print(f"Received message: {request.message}")
-        response = await chat_sessions["manager"].process_query(request.message)
-        print(f"\n=== Final Response Before Sending ===\nFormat: {json.dumps(response, indent=2)}")
+        # Process the query with context
+        response = await chat_session.process_query(request.message)
         
-        # Ensure response is in correct format
-        formatted_response = {
+        print(f"\n=== Final Response ===\n{response}")
+        
+        # Return JSON response
+        return JSONResponse(content={
             "type": response.get("type", "answer"),
             "text": response.get("text", str(response))
-        }
-        
-        # Convert to JSON-safe format and return
-        json_compatible = jsonable_encoder(formatted_response)
-        return json_compatible
+        })
 
     except Exception as e:
         print(f"Error in chat endpoint: {str(e)}")
-        return {
-            "type": "error",
-            "text": str(e)
-        } 
+        return JSONResponse(
+            status_code=500,
+            content={
+                "type": "error",
+                "text": str(e)
+            }
+        )
+
+@router.get("/context")
+async def get_context(
+    chat_session: ChatSession = Depends(get_chat_session)
+) -> JSONResponse:
+    """
+    Get the current conversation context
+    """
+    try:
+        return JSONResponse(content=chat_session.get_state())
+    except Exception as e:
+        return JSONResponse(
+            status_code=500,
+            content={
+                "type": "error",
+                "text": str(e)
+            }
+        )
+
+@router.post("/reset")
+async def reset_chat(
+    chat_session: ChatSession = Depends(get_chat_session)
+) -> JSONResponse:
+    """
+    Reset the chat session
+    """
+    try:
+        chat_session.reset()
+        return JSONResponse(content={
+            "status": "success",
+            "message": "Chat session reset successfully"
+        })
+    except Exception as e:
+        return JSONResponse(
+            status_code=500,
+            content={
+                "type": "error",
+                "text": str(e)
+            }
+        ) 

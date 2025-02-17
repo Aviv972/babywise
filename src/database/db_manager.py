@@ -5,6 +5,7 @@ from datetime import datetime
 import os
 from typing import Optional, List, Dict
 import sqlite3
+import json
 
 Base = declarative_base()
 
@@ -49,47 +50,148 @@ class DatabaseManager:
         self.create_tables()
 
     def create_tables(self):
+        """Create necessary database tables if they don't exist"""
+        # Drop existing tables to recreate with new schema
+        self.conn.execute("DROP TABLE IF EXISTS messages")
+        self.conn.execute("DROP TABLE IF EXISTS context_info")
+        self.conn.execute("DROP TABLE IF EXISTS conversations")
+        
         self.conn.execute("""
-            CREATE TABLE IF NOT EXISTS conversations (
+            CREATE TABLE conversations (
                 id INTEGER PRIMARY KEY,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                agent_type TEXT,
+                original_query TEXT,
+                metadata TEXT,
+                user_id TEXT,
+                status TEXT DEFAULT 'active'
             )
         """)
         
         self.conn.execute("""
-            CREATE TABLE IF NOT EXISTS messages (
+            CREATE TABLE messages (
                 id INTEGER PRIMARY KEY,
                 conversation_id INTEGER,
                 content TEXT,
-                role TEXT,  -- 'user' or 'model'
+                role TEXT,  -- 'user', 'assistant', or 'system'
+                type TEXT,  -- message type (e.g., 'follow_up_question', 'response')
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                metadata TEXT,  -- JSON string for additional data
+                FOREIGN KEY (conversation_id) REFERENCES conversations(id)
+            )
+        """)
+        
+        self.conn.execute("""
+            CREATE TABLE context_info (
+                id INTEGER PRIMARY KEY,
+                conversation_id INTEGER,
+                field TEXT,
+                value TEXT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (conversation_id) REFERENCES conversations(id)
             )
         """)
         self.conn.commit()
 
-    def create_conversation(self) -> int:
+    def create_conversation(self, agent_type: str = None, original_query: str = None, metadata: dict = None) -> int:
+        """Create a new conversation and return its ID"""
         cursor = self.conn.execute(
-            "INSERT INTO conversations DEFAULT VALUES"
+            """INSERT INTO conversations 
+               (agent_type, original_query, metadata, user_id) 
+               VALUES (?, ?, ?, ?)""",
+            (agent_type, original_query, json.dumps(metadata) if metadata else None, 'default')
         )
         self.conn.commit()
         return cursor.lastrowid
 
-    def add_message(self, conversation_id: int, content: str, role: str):
+    def add_message(self, conversation_id: int, content: str, role: str, 
+                   msg_type: str = None, metadata: dict = None):
+        """Add a message to the conversation"""
         self.conn.execute(
-            "INSERT INTO messages (conversation_id, content, role) VALUES (?, ?, ?)",
-            (conversation_id, content, role)
+            """INSERT INTO messages 
+               (conversation_id, content, role, type, metadata)
+               VALUES (?, ?, ?, ?, ?)""",
+            (conversation_id, content, role, msg_type, 
+             json.dumps(metadata) if metadata else None)
+        )
+        self.conn.commit()
+
+    def add_context_info(self, conversation_id: int, field: str, value: str):
+        """Store context information for a conversation"""
+        self.conn.execute(
+            """INSERT INTO context_info 
+               (conversation_id, field, value)
+               VALUES (?, ?, ?)""",
+            (conversation_id, field, value)
         )
         self.conn.commit()
 
     def get_conversation_history(self, conversation_id: int, limit: int = 10) -> List[Dict]:
+        """Get conversation history with all associated data"""
+        # Get messages
         cursor = self.conn.execute(
-            """SELECT content, role FROM messages 
-               WHERE conversation_id = ? 
-               ORDER BY created_at DESC LIMIT ?""",
+            """SELECT m.content, m.role, m.type, m.metadata, m.created_at,
+                      c.original_query, c.agent_type, c.metadata as conv_metadata
+               FROM messages m
+               JOIN conversations c ON m.conversation_id = c.id
+               WHERE m.conversation_id = ?
+               ORDER BY m.created_at DESC LIMIT ?""",
             (conversation_id, limit)
         )
-        return cursor.fetchall()
+        
+        messages = []
+        for row in cursor.fetchall():
+            message = {
+                'content': row[0],
+                'role': row[1],
+                'type': row[2],
+                'metadata': json.loads(row[3]) if row[3] else {},
+                'timestamp': row[4],
+                'conversation_info': {
+                    'original_query': row[5],
+                    'agent_type': row[6],
+                    'metadata': json.loads(row[7]) if row[7] else {}
+                }
+            }
+            messages.append(message)
+        
+        return messages
+
+    def get_context_info(self, conversation_id: int) -> Dict[str, str]:
+        """Get all context information for a conversation"""
+        cursor = self.conn.execute(
+            """SELECT field, value 
+               FROM context_info 
+               WHERE conversation_id = ?
+               ORDER BY created_at DESC""",
+            (conversation_id,)
+        )
+        
+        context = {}
+        for row in cursor.fetchall():
+            context[row[0]] = row[1]
+        return context
+
+    def update_conversation_metadata(self, conversation_id: int, metadata: dict):
+        """Update conversation metadata"""
+        self.conn.execute(
+            """UPDATE conversations 
+               SET metadata = ?
+               WHERE id = ?""",
+            (json.dumps(metadata), conversation_id)
+        )
+        self.conn.commit()
+
+    def close(self):
+        """Close the database connection"""
+        self.conn.close()
+
+    def __del__(self):
+        """Ensure database connection is closed when object is destroyed"""
+        try:
+            self.conn.close()
+        except:
+            pass
 
     def search_knowledge_base(self, query: str, category: str, threshold: float = 0.7) -> Optional[str]:
         """Search for existing relevant responses"""

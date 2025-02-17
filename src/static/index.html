@@ -3,27 +3,397 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Pregnancy & Parenting Assistant</title>
-    <link rel="stylesheet" href="/static/style.css">
-    <link rel="icon" type="image/x-icon" href="/static/favicon.ico">
+    <title>Babywise Assistant</title>
+    <link href="https://fonts.googleapis.com/css2?family=Open+Sans:wght@400;600&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --whatsapp-green: #128C7E;
+            --chat-bg: #E5DDD5;
+            --user-msg-bg: #DCF8C6;
+            --assistant-msg-bg: #FFFFFF;
+            --header-height: 60px;
+            --footer-height: 62px;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Open Sans', sans-serif;
+            background-color: #f0f2f5;
+            height: 100vh;
+            margin: 0;
+            padding: 0;
+        }
+
+        .app-container {
+            max-width: 100%;
+            height: 100vh;
+            margin: 0 auto;
+            background: white;
+            position: relative;
+            overflow: hidden;
+        }
+
+        @media (min-width: 768px) {
+            .app-container {
+                max-width: 800px;
+                height: 90vh;
+                margin: 5vh auto;
+                border-radius: 10px;
+                box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            }
+        }
+
+        .chat-header {
+            background-color: var(--whatsapp-green);
+            color: white;
+            padding: 10px 16px;
+            height: var(--header-height);
+            display: flex;
+            align-items: center;
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            z-index: 10;
+        }
+
+        .chat-header h1 {
+            font-size: 1.2rem;
+            font-weight: 600;
+        }
+
+        .chat-messages {
+            background-color: var(--chat-bg);
+            background-image: url("data:image/svg+xml,%3Csvg width='64' height='64' viewBox='0 0 64 64' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M8 16c4.418 0 8-3.582 8-8s-3.582-8-8-8-8 3.582-8 8 3.582 8 8 8zm0-2c3.314 0 6-2.686 6-6s-2.686-6-6-6-6 2.686-6 6 2.686 6 6 6zm33.414-6l5.95-5.95L45.95.636 40 6.586 34.05.636 32.636 2.05 38.586 8l-5.95 5.95 1.414 1.414L40 9.414l5.95 5.95 1.414-1.414L41.414 8zM40 48c4.418 0 8-3.582 8-8s-3.582-8-8-8-8 3.582-8 8 3.582 8 8 8zm0-2c3.314 0 6-2.686 6-6s-2.686-6-6-6-6 2.686-6 6 2.686 6 6 6zM9.414 40l5.95-5.95-1.414-1.414L8 38.586l-5.95-5.95L.636 34.05 6.586 40l-5.95 5.95 1.414 1.414L8 41.414l5.95 5.95 1.414-1.414L9.414 40z' fill='%239C92AC' fill-opacity='0.1' fill-rule='evenodd'/%3E%3C/svg%3E");
+            padding: 20px;
+            height: calc(100% - var(--header-height) - var(--footer-height));
+            margin-top: var(--header-height);
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .message {
+            max-width: 85%;
+            margin-bottom: 12px;
+            padding: 8px 12px;
+            border-radius: 7.5px;
+            position: relative;
+            word-wrap: break-word;
+            font-size: 0.95rem;
+            line-height: 1.4;
+        }
+
+        .message::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            width: 12px;
+            height: 12px;
+        }
+
+        .user {
+            background-color: var(--user-msg-bg);
+            align-self: flex-end;
+            border-top-right-radius: 0;
+        }
+
+        .user::before {
+            right: -12px;
+            border-bottom-left-radius: 16px;
+            border-top: 12px solid var(--user-msg-bg);
+            border-right: 12px solid transparent;
+        }
+
+        .assistant {
+            background-color: var(--assistant-msg-bg);
+            align-self: flex-start;
+            border-top-left-radius: 0;
+        }
+
+        .assistant::before {
+            left: -12px;
+            border-bottom-right-radius: 16px;
+            border-top: 12px solid var(--assistant-msg-bg);
+            border-left: 12px solid transparent;
+        }
+
+        .system {
+            background-color: rgba(255, 255, 255, 0.8);
+            align-self: center;
+            border-radius: 16px;
+            padding: 6px 12px;
+            font-size: 0.85rem;
+            color: #666;
+        }
+
+        .chat-input {
+            background-color: #f0f0f0;
+            padding: 10px;
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            height: var(--footer-height);
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            border-top: 1px solid #ddd;
+        }
+
+        #chat-form {
+            display: flex;
+            gap: 8px;
+            width: 100%;
+            align-items: center;
+        }
+
+        #message-input {
+            flex: 1;
+            padding: 9px 12px;
+            border: none;
+            border-radius: 21px;
+            font-size: 15px;
+            background: white;
+            outline: none;
+        }
+
+        #message-input:focus {
+            outline: none;
+        }
+
+        button {
+            background-color: var(--whatsapp-green);
+            color: white;
+            border: none;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: background-color 0.2s;
+        }
+
+        button:hover {
+            background-color: #075E54;
+        }
+
+        .typing-indicator {
+            background-color: var(--assistant-msg-bg);
+            padding: 12px;
+            border-radius: 7.5px;
+            margin-bottom: 12px;
+            align-self: flex-start;
+            display: none;
+        }
+
+        .typing-indicator span {
+            display: inline-block;
+            width: 8px;
+            height: 8px;
+            background-color: #90949c;
+            border-radius: 50%;
+            margin-right: 5px;
+            animation: typing 1s infinite;
+        }
+
+        .typing-indicator span:nth-child(2) {
+            animation-delay: 0.2s;
+        }
+
+        .typing-indicator span:nth-child(3) {
+            animation-delay: 0.4s;
+            margin-right: 0;
+        }
+
+        @keyframes typing {
+            0%, 100% { transform: translateY(0); }
+            50% { transform: translateY(-5px); }
+        }
+
+        .message-time {
+            font-size: 0.7rem;
+            color: #999;
+            margin-top: 4px;
+            float: right;
+        }
+
+        /* Mobile Optimizations */
+        @media (max-width: 480px) {
+            .app-container {
+                height: 100vh;
+                border-radius: 0;
+                margin: 0;
+            }
+
+            .message {
+                max-width: 90%;
+                font-size: 0.9rem;
+            }
+
+            .chat-header h1 {
+                font-size: 1.1rem;
+            }
+        }
+    </style>
 </head>
 <body>
-    <div class="chat-container">
+    <div class="app-container">
         <div class="chat-header">
-            <h1>Pregnancy & Parenting Assistant</h1>
+            <h1>Babywise Assistant</h1>
         </div>
         <div class="chat-messages" id="chat-messages">
             <div class="message system">
-                Hello! I'm your pregnancy and parenting assistant. How can I help you today?
+                👋 Hi there! I'm your friendly Babywise Assistant, here to help make your parenting journey a little easier.
+
+I can help you with:
+👶 Parenting Guidance
+- Sleep schedules and routines
+- Feeding advice and meal planning
+- Development milestones
+- Daily care and routines
+- Behavior and learning tips
+
+🛍️ Baby Gear Support
+- Product recommendations when needed
+- Personalized suggestions for your needs
+- Help finding the right gear for your family
+
+How can I assist you today? Feel free to ask about any parenting topics or baby gear questions!
+            </div>
+            <div class="typing-indicator" id="typing-indicator">
+                <span></span>
+                <span></span>
+                <span></span>
             </div>
         </div>
         <div class="chat-input">
             <form id="chat-form">
-                <input type="text" id="message-input" placeholder="Type your message here..." autocomplete="off">
-                <button type="submit">Send</button>
+                <input 
+                    type="text" 
+                    id="message-input" 
+                    placeholder="Type a message..." 
+                    autocomplete="off"
+                >
+                <button type="submit">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                        <path d="M2.01 21L23 12L2.01 3L2 10L17 12L2 14L2.01 21Z" fill="white"/>
+                    </svg>
+                </button>
             </form>
         </div>
     </div>
-    <script src="/static/script.js"></script>
+    <script>
+        const chatForm = document.getElementById('chat-form');
+        const messageInput = document.getElementById('message-input');
+        const chatMessages = document.getElementById('chat-messages');
+        const typingIndicator = document.getElementById('typing-indicator');
+        
+        let sessionId = 'default';
+
+        function getCurrentTime() {
+            return new Date().toLocaleTimeString('en-US', { 
+                hour: 'numeric', 
+                minute: '2-digit',
+                hour12: true 
+            });
+        }
+
+        function addMessage(content, role) {
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `message ${role}`;
+            
+            const messageContent = document.createElement('span');
+            messageContent.textContent = content;
+            
+            const timeSpan = document.createElement('div');
+            timeSpan.className = 'message-time';
+            timeSpan.textContent = getCurrentTime();
+            
+            messageDiv.appendChild(messageContent);
+            messageDiv.appendChild(timeSpan);
+            
+            chatMessages.insertBefore(messageDiv, typingIndicator);
+            chatMessages.scrollTop = chatMessages.scrollHeight;
+        }
+
+        function showTypingIndicator() {
+            typingIndicator.style.display = 'block';
+            chatMessages.scrollTop = chatMessages.scrollHeight;
+        }
+
+        function hideTypingIndicator() {
+            typingIndicator.style.display = 'none';
+        }
+
+        chatForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const message = messageInput.value.trim();
+            if (!message) return;
+
+            // Clear input
+            messageInput.value = '';
+
+            // Add user message
+            addMessage(message, 'user');
+
+            // Show typing indicator
+            showTypingIndicator();
+
+            try {
+                const response = await fetch('/chat', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        message: message,
+                        session_id: sessionId
+                    })
+                });
+
+                const data = await response.json();
+                
+                // Hide typing indicator
+                hideTypingIndicator();
+
+                if (response.ok) {
+                    // Add assistant response
+                    addMessage(data.text, 'assistant');
+                } else {
+                    // Add error message
+                    addMessage('Sorry, I encountered an error. Please try again.', 'system');
+                    console.error('Error:', data);
+                }
+            } catch (error) {
+                // Hide typing indicator
+                hideTypingIndicator();
+                
+                // Add error message
+                addMessage('Sorry, I encountered an error. Please try again.', 'system');
+                console.error('Error:', error);
+            }
+        });
+
+        // Enable sending message with Enter key
+        messageInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                chatForm.dispatchEvent(new Event('submit'));
+            }
+        });
+
+        // Focus input on page load
+        window.addEventListener('load', () => {
+            messageInput.focus();
+        });
+    </script>
 </body>
 </html> 
