@@ -54,19 +54,25 @@ async def startup_event():
         db = DatabaseManager()
         db.create_tables()
         
-        # Validate config
-        Config.validate()
+        # Get environment variables with defaults
+        api_key = os.getenv('OPENAI_API_KEY')
+        model_name = os.getenv('MODEL_NAME', 'gpt-4')  # Default to gpt-4 if not set
+        
+        if not api_key:
+            raise ValueError("OPENAI_API_KEY is required")
+            
+        logger.info(f"Using model: {model_name}")
         
         # Initialize services
         global llm_service, agent_factory
         llm_service = LLMService(
-            api_key=os.getenv('OPENAI_API_KEY'),
-            model=os.getenv('MODEL_NAME', 'gpt-4')
+            api_key=api_key,
+            model=model_name
         )
         agent_factory = AgentFactory(llm_service)
-        print("Startup completed successfully")
+        logger.info("Startup completed successfully")
     except Exception as e:
-        print(f"Error during startup: {str(e)}")
+        logger.error(f"Error during startup: {str(e)}", exc_info=True)
         raise
 
 class ChatMessage(BaseModel):
