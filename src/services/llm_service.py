@@ -5,6 +5,7 @@ from src.constants import ContextFields, MessageRoles, ResponseTypes, QuestionFi
 import json
 import os
 from dotenv import load_dotenv
+import logging
 
 class LLMService:
     def __init__(self, api_key: str = None, model: str = None):
@@ -13,21 +14,37 @@ class LLMService:
         self.perplexity_api_key = os.getenv('PERPLEXITY_API_KEY')
         self.model = model or os.getenv('MODEL_NAME', 'gpt-4')
         
+        logger = logging.getLogger(__name__)
+        logger.info(f"Initializing LLM Service with model: {self.model}")
+        
         if not self.openai_api_key:
+            logger.error("OpenAI API key is missing!")
             raise ValueError("OpenAI API key is required")
             
-        print(f"Initializing LLM Service with model: {self.model}")
-        self.openai_client = AsyncOpenAI(api_key=self.openai_api_key)
+        # Initialize OpenAI client
+        try:
+            logger.info("Initializing OpenAI client...")
+            self.openai_client = AsyncOpenAI(api_key=self.openai_api_key)
+            logger.info("OpenAI client initialized successfully")
+        except Exception as e:
+            logger.error(f"Error initializing OpenAI client: {str(e)}", exc_info=True)
+            raise
         
         # Initialize Perplexity client if key is available
         if self.perplexity_api_key:
-            self.perplexity_client = AsyncOpenAI(
-                api_key=self.perplexity_api_key,
-                base_url="https://api.perplexity.ai"
-            )
+            try:
+                logger.info("Initializing Perplexity client...")
+                self.perplexity_client = AsyncOpenAI(
+                    api_key=self.perplexity_api_key,
+                    base_url="https://api.perplexity.ai"
+                )
+                logger.info("Perplexity client initialized successfully")
+            except Exception as e:
+                logger.error(f"Error initializing Perplexity client: {str(e)}", exc_info=True)
+                self.perplexity_client = None
         else:
+            logger.warning("Perplexity API key not found. Some features may be limited.")
             self.perplexity_client = None
-            print("Warning: Perplexity API key not found. Some features may be limited.")
 
         self.system_prompt = """You are a parenting expert assistant.
             CRITICAL INSTRUCTIONS FOR CONTEXT MAINTENANCE:
@@ -199,9 +216,11 @@ class LLMService:
 
     async def generate_response(self, prompt: str, chat_history: List[Dict] = None, context: Dict = None) -> Dict:
         """Generate a response using OpenAI API with enhanced context awareness"""
+        logger = logging.getLogger(__name__)
         try:
-            print("\n=== OpenAI Response Generation ===")
-            print(f"Context available: {bool(context)}")
+            logger.info("\n=== OpenAI Response Generation ===")
+            logger.info(f"Using model: {self.model}")
+            logger.info(f"Context available: {bool(context)}")
             
             # Build messages array with enhanced context
             messages = [{"role": "system", "content": self.system_prompt}]
@@ -214,6 +233,7 @@ class LLMService:
                 Gathered Information: {json.dumps(context.get('gathered_info', {}), indent=2)}
                 """
                 messages.append({"role": "system", "content": context_str})
+                logger.info("Added context to messages")
 
             # Add relevant chat history if available
             if chat_history:
@@ -222,11 +242,12 @@ class LLMService:
                         "role": msg.get('role', 'user'),
                         "content": msg.get('content', '')
                     })
+                logger.info("Added chat history to messages")
 
             # Add the current prompt
             messages.append({"role": "user", "content": prompt})
 
-            print("Sending request to OpenAI with enhanced context...")
+            logger.info("Sending request to OpenAI...")
             response = await self.openai_client.chat.completions.create(
                 model=self.model,
                 messages=messages,
@@ -235,12 +256,14 @@ class LLMService:
             )
             
             if not response.choices or not response.choices[0].message:
+                logger.error("No valid response from OpenAI API")
                 raise ValueError("No valid response from OpenAI API")
 
+            logger.info("Successfully received response from OpenAI")
             return {'text': response.choices[0].message.content}
 
         except Exception as e:
-            print(f"Error in OpenAI response generation: {str(e)}")
+            logger.error(f"Error in OpenAI response generation: {str(e)}", exc_info=True)
             raise
 
     def _prepare_prompt(self, prompt: str, context: Dict) -> str:

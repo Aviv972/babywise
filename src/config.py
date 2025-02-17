@@ -3,48 +3,58 @@ from dotenv import load_dotenv
 from pathlib import Path
 import base64
 from enum import Enum
+import logging
+
+logger = logging.getLogger(__name__)
 
 class Config:
     # Load environment variables
     load_dotenv()
-    print("\n=== Loading Configuration ===")
+    logger.info("\n=== Loading Configuration ===")
 
     @classmethod
     def get_api_key(cls) -> str:
         """Get and validate OpenAI API key"""
         api_key = os.getenv('OPENAI_API_KEY')
         if not api_key:
+            logger.error("OPENAI_API_KEY not found")
             raise ValueError("OPENAI_API_KEY not found")
+        logger.info("OpenAI API key loaded successfully")
         return api_key.strip()
 
     # Remove any validation that might interfere with the key format
     OPENAI_API_KEY = os.getenv('OPENAI_API_KEY', '').strip()
-    MODEL_NAME = os.getenv('MODEL_NAME', 'gpt-4o-mini')
+    MODEL_NAME = os.getenv('MODEL_NAME', 'gpt-4')
     DATABASE_URL = os.getenv('DATABASE_URL', 'sqlite:///chatbot.db')
     PERPLEXITY_API_KEY = os.getenv('PERPLEXITY_API_KEY')
-    print("Perplexity API Key loaded successfully")  # Just confirm it's loaded without showing the key
 
     @classmethod
     def validate(cls):
         """Validate all required configuration"""
-        required_vars = ['OPENAI_API_KEY', 'PERPLEXITY_API_KEY']
-        missing_vars = [var for var in required_vars if not os.getenv(var)]
+        logger.info("Validating configuration...")
         
-        if missing_vars:
-            raise ValueError(f"Missing required environment variables: {', '.join(missing_vars)}")
-        
-        # Validate OpenAI API key format
-        api_key = cls.get_api_key()
-        if not api_key.startswith('sk-'):
+        # Check OpenAI API key
+        if not cls.OPENAI_API_KEY:
+            logger.error("Missing OpenAI API key")
+            raise ValueError("OPENAI_API_KEY is required")
+        if not cls.OPENAI_API_KEY.startswith('sk-'):
+            logger.error("Invalid OpenAI API key format")
             raise ValueError("Invalid OpenAI API key format")
+        logger.info("OpenAI API key validated")
             
-        # Validate Perplexity API key format
-        perplexity_key = cls.PERPLEXITY_API_KEY
-        if not perplexity_key.startswith('pplx-'):
-            raise ValueError("Invalid Perplexity API key format")
+        # Check Perplexity API key
+        if cls.PERPLEXITY_API_KEY:
+            if not cls.PERPLEXITY_API_KEY.startswith('pplx-'):
+                logger.error("Invalid Perplexity API key format")
+                raise ValueError("Invalid Perplexity API key format")
+            logger.info("Perplexity API key validated")
+        else:
+            logger.warning("Perplexity API key not provided")
         
-        print("Environment variables loaded successfully")
-        print(f"Using model: {cls.MODEL_NAME}")
+        # Log configuration status
+        logger.info(f"Using model: {cls.MODEL_NAME}")
+        logger.info(f"Database URL: {cls.DATABASE_URL}")
+        logger.info("Configuration validation complete")
 
 class ResponseTypes(Enum):
     """Enum for different types of responses"""
