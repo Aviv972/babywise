@@ -110,6 +110,15 @@ async def chat(message: ChatMessage) -> Dict:
         session = chat_sessions[message.session_id]
         print("Chat session retrieved successfully")
 
+        # Verify environment variables
+        print("Checking environment variables...")
+        api_key = os.getenv('OPENAI_API_KEY')
+        perplexity_key = os.getenv('PERPLEXITY_API_KEY')
+        model_name = os.getenv('MODEL_NAME')
+        print(f"OpenAI API Key present: {bool(api_key)}")
+        print(f"Perplexity API Key present: {bool(perplexity_key)}")
+        print(f"Model name: {model_name}")
+
         # Process the message
         try:
             print("Processing message through chat session...")
@@ -134,6 +143,8 @@ async def chat(message: ChatMessage) -> Dict:
 
         except Exception as session_error:
             print(f"Error in chat session: {str(session_error)}")
+            print(f"Error type: {type(session_error).__name__}")
+            print(f"Error details: {str(session_error)}")
             error_type = type(session_error).__name__
             
             if 'API' in error_type:
@@ -154,6 +165,10 @@ async def chat(message: ChatMessage) -> Dict:
 
     except Exception as e:
         print(f"Critical server error: {str(e)}")
+        print(f"Error type: {type(e).__name__}")
+        print(f"Error details: {str(e)}")
+        import traceback
+        print(f"Traceback: {traceback.format_exc()}")
         return {
             'type': ResponseTypes.ERROR,
             'text': "I apologize, but I'm experiencing technical difficulties. Please try again in a moment."
