@@ -326,30 +326,37 @@ Focus on practical, real-world advice and current market options."""
             # Update context with any new information
             context['gathered_info'] = gathered_info
 
+            # Get product category from context
+            product_category = context.get('product_category')
+            if not product_category:
+                # Try to determine product category from query
+                product_categories = {
+                    'car_seat': ['car seat', 'carseat', 'car safety', 'infant seat', 'booster seat', 'convertible seat'],
+                    'stroller': ['stroller', 'pushchair', 'pram', 'buggy', 'travel system'],
+                    'carrier': ['carrier', 'baby wrap', 'sling', 'baby wearing'],
+                    'furniture': ['crib', 'bassinet', 'changing table', 'playpen']
+                }
+                
+                query_lower = query.lower()
+                for category, keywords in product_categories.items():
+                    if any(keyword in query_lower for keyword in keywords):
+                        product_category = category
+                        context['product_category'] = category
+                        print(f"Detected product category: {category}")
+                        break
+
             # Prepare enhanced context for the LLM
             enhanced_context = {
-                'query_type': 'stroller',
+                'query_type': product_category or 'general',
                 'gathered_info': gathered_info,
                 'needs_realtime_info': True,
-                'agent_type': 'baby_gear'
+                'agent_type': 'baby_gear',
+                'product_category': product_category
             }
 
             # Generate response with enhanced context
-            response = await self.llm_service.generate_response(
-                prompt=f"""As a baby gear expert, I need to provide stroller recommendations based on this query: {query}
-
-Current Information:
-Budget: {gathered_info.get('budget', 'Not specified')}
-
-Please provide:
-1. 2-3 specific stroller recommendations within the budget (if specified)
-2. Key features and benefits of each
-3. Price points
-4. Where to buy
-5. Any important considerations
-
-Focus on practical, real-world advice and current market options.""",
-                chat_history=chat_history,
+            response = await self.llm_service.generate_perplexity_response(
+                query=query,
                 context=enhanced_context
             )
             
@@ -359,7 +366,7 @@ Focus on practical, real-world advice and current market options.""",
                     'type': ResponseTypes.ERROR,
                     'text': "I apologize, but I'm having trouble accessing current product information. Please try again in a moment."
                 }
-
+            
             print("Successfully generated recommendation")
             return {
                 'type': ResponseTypes.ANSWER,

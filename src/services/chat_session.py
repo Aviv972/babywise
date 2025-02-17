@@ -197,12 +197,28 @@ class ChatSession:
                     'original_query': query,
                     'gathered_info': {},
                     'conversation_history': [],
-                    'agent_type': None
+                    'agent_type': None,
+                    'product_category': None  # Add product category tracking
                 }
             
             # Store original query if this is the first message
             if not self.context.get('original_query'):
                 self.context['original_query'] = query
+
+            # Determine product category from query
+            product_categories = {
+                'car_seat': ['car seat', 'carseat', 'car safety', 'infant seat', 'booster seat', 'convertible seat'],
+                'stroller': ['stroller', 'pushchair', 'pram', 'buggy', 'travel system'],
+                'carrier': ['carrier', 'baby wrap', 'sling', 'baby wearing'],
+                'furniture': ['crib', 'bassinet', 'changing table', 'playpen']
+            }
+            
+            query_lower = query.lower()
+            for category, keywords in product_categories.items():
+                if any(keyword in query_lower for keyword in keywords):
+                    self.context['product_category'] = category
+                    print(f"Detected product category: {category}")
+                    break
 
             # Determine agent type based on query content
             if not self.context.get('agent_type'):
@@ -231,7 +247,8 @@ class ChatSession:
                 self.context['conversation_history'].append({
                     'role': 'assistant',
                     'content': response['text'],
-                    'timestamp': datetime.now().isoformat()
+                    'timestamp': datetime.now().isoformat(),
+                    'product_category': self.context.get('product_category')  # Include product category in history
                 })
 
             print(f"Response type: {response.get('type', 'unknown')}")

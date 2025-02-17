@@ -24,7 +24,7 @@ class BaseAgent(ABC):
         )
 
     async def process_query(self, query: str, context: Optional[Dict] = None, chat_history: Optional[List[Dict]] = None) -> Dict:
-        """Process a query with enhanced context management and parent-friendly responses"""
+        """Process a query with enhanced context management"""
         try:
             # Initialize or use existing context
             context = context or {}
@@ -38,8 +38,13 @@ class BaseAgent(ABC):
             if self._is_emergency_situation(query):
                 return self._handle_emergency_situation(query)
 
+            # Get product category from context
+            product_category = context.get('product_category')
+            if product_category:
+                print(f"Processing query for product category: {product_category}")
+
             # Get relevant category and subcategory
-            category, subcategory = self._identify_question_category(query)
+            category, subcategory = self._identify_question_category(query, product_category)
             
             # Get response guidelines for this type of query
             guidelines = self._get_response_guidelines(category)
@@ -48,7 +53,7 @@ class BaseAgent(ABC):
             prompt = self._generate_enhanced_prompt(query, category, subcategory, context, guidelines)
 
             # Determine if we should use Perplexity API
-            use_perplexity = self._should_use_perplexity(query, category)
+            use_perplexity = self._should_use_perplexity(query, context)
             
             # Generate response using appropriate API
             if use_perplexity:
@@ -123,10 +128,21 @@ class BaseAgent(ABC):
                    "\n4. Monitor progress and adjust care as needed"
         }
 
-    def _identify_question_category(self, query: str) -> tuple:
+    def _identify_question_category(self, query: str, product_category: Optional[str] = None) -> tuple:
         """Identify the category and subcategory of the question"""
+        # If we have a product category, use it to determine the category
+        if product_category:
+            if product_category == 'car_seat':
+                return 'safety_gear', 'car_seats'
+            elif product_category == 'stroller':
+                return 'mobility_gear', 'strollers'
+            elif product_category == 'carrier':
+                return 'mobility_gear', 'carriers'
+            elif product_category == 'furniture':
+                return 'nursery_gear', 'furniture'
+
+        # Default category detection logic
         query_lower = query.lower()
-        
         for category, subcategories in self.common_questions.items():
             for subcategory, questions in subcategories.items():
                 for question in questions:
@@ -225,8 +241,8 @@ class BaseAgent(ABC):
                 
         return "\n".join(formatted)
 
-    def _should_use_perplexity(self, query: str, category: str) -> bool:
-        """Determine if we should use Perplexity API based on query content and category"""
+    def _should_use_perplexity(self, query: str, context: Dict) -> bool:
+        """Determine if we should use Perplexity API based on query content and context"""
         # Use Perplexity for product-related queries and real-time information needs
         product_categories = ['clothing_essentials', 'safety_emergencies']
         product_keywords = [
@@ -236,7 +252,7 @@ class BaseAgent(ABC):
         ]
         
         # Check if query is in a product-related category
-        if category in product_categories:
+        if context.get('product_category') in product_categories:
             return True
             
         # Check if query contains product-related keywords

@@ -1,52 +1,43 @@
-# Babywise - AI-Powered Parenting Assistant
+# Babywise Assistant
 
-Babywise is an intelligent chatbot system designed to provide personalized parenting advice and recommendations. The system uses a multi-agent architecture to handle various aspects of parenting queries, from baby gear recommendations to sleep training advice.
+A smart AI assistant for parents, providing personalized advice and product recommendations for baby care.
 
 ## Features
 
-- 🤖 Multi-agent architecture for specialized advice
-- 💬 Context-aware conversation management
-- 🎯 Dynamic field detection and validation
-- 📝 Structured response formatting
-- 🔄 Persistent context maintenance
+- Personalized baby care advice
+- Product recommendations with real-time pricing
+- Context-aware conversations
+- Multi-agent architecture for specialized responses
+- Support for both English and Hebrew
 
-## Project Structure
+## Tech Stack
 
-```
-babywise/
-├── src/
-│   ├── agents/
-│   │   ├── base_agent.py
-│   │   ├── baby_gear_agent.py
-│   │   └── activity_agent.py
-│   ├── services/
-│   │   ├── llm_service.py
-│   │   ├── chat_session.py
-│   │   └── agent_factory.py
-│   ├── models/
-│   │   └── chat.py
-│   ├── routes/
-│   │   └── chat.py
-│   ├── database/
-│   │   └── db_manager.py
-│   ├── middleware/
-│   │   └── debug.py
-│   └── static/
-│       └── script.js
-├── tests/
-├── docs/
-└── config/
+- FastAPI
+- OpenAI GPT-4
+- Perplexity AI (Llama 3 models)
+- SQLite
+- Vercel for deployment
+
+## Environment Variables
+
+Create a `.env` file with the following variables:
+
+```env
+OPENAI_API_KEY=your_openai_api_key
+PERPLEXITY_API_KEY=your_perplexity_api_key
+MODEL_NAME=gpt-4o-mini
+DATABASE_URL=sqlite:///chatbot.db
 ```
 
-## Setup
+## Local Development
 
 1. Clone the repository:
 ```bash
-git clone https://github.com/yourusername/babywise.git
+git clone https://github.com/Aviv972/babywise.git
 cd babywise
 ```
 
-2. Create and activate virtual environment:
+2. Create and activate a virtual environment:
 ```bash
 python -m venv venv
 source venv/bin/activate  # On Windows: venv\Scripts\activate
@@ -57,33 +48,58 @@ source venv/bin/activate  # On Windows: venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-4. Set up environment variables:
-```bash
-cp .env.template .env
-# Edit .env with your API keys and configuration
-```
-
-5. Run the application:
+4. Run the development server:
 ```bash
 python src/server.py
 ```
 
-## Architecture
+The server will be available at `http://localhost:8004`
 
-### Agent System
-- Each agent specializes in specific parenting topics
-- Dynamic agent selection based on query content
-- Maintains context throughout conversations
+## Deployment to Vercel
 
-### Context Management
-- Persistent storage of conversation state
-- Dynamic field detection and validation
-- Context-aware response generation
+1. Install Vercel CLI:
+```bash
+npm i -g vercel
+```
 
-### Response Generation
-- Structured format based on query type
-- Validation of context maintenance
-- Dynamic follow-up question generation
+2. Login to Vercel:
+```bash
+vercel login
+```
+
+3. Deploy:
+```bash
+vercel
+```
+
+4. Add environment variables in Vercel:
+- Go to your project settings
+- Add the environment variables from your `.env` file
+
+## Project Structure
+
+```
+babywise/
+├── src/
+│   ├── agents/           # Specialized AI agents
+│   ├── docs/            # Documentation and common questions
+│   ├── services/        # Core services (LLM, Chat, etc.)
+│   ├── database/        # Database management
+│   ├── models/          # Data models
+│   ├── static/          # Static files (HTML, CSS, JS)
+│   └── server.py        # Main FastAPI application
+├── tests/               # Test files
+├── requirements.txt     # Python dependencies
+├── vercel.json         # Vercel configuration
+└── README.md           # This file
+```
+
+## API Endpoints
+
+- `GET /`: Home page
+- `POST /chat`: Chat endpoint
+- `GET /health`: Health check
+- `DELETE /session/{session_id}`: Clear chat session
 
 ## Contributing
 
@@ -95,7 +111,7 @@ python src/server.py
 
 ## License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+This project is licensed under the MIT License - see the LICENSE file for details.
 
 ## Acknowledgments
 
