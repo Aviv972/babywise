@@ -8,6 +8,7 @@ import sys
 from pathlib import Path
 import os
 from dotenv import load_dotenv
+import logging
 
 # Load environment variables
 load_dotenv()
@@ -97,54 +98,59 @@ async def favicon():
 @app.post("/chat")
 async def chat(message: ChatMessage) -> Dict:
     """Process chat messages with enhanced error handling and response tracking"""
+    logger = logging.getLogger(__name__)
+    logger.info("\n=== Processing Chat Request ===")
+    
     try:
-        print(f"\n=== Processing Chat Request ===")
-        print(f"Message: {message.message}")
-        print(f"Session ID: {message.session_id}")
+        logger.info(f"Message: {message.message}")
+        logger.info(f"Session ID: {message.session_id}")
+
+        # Log environment status
+        logger.info("=== Environment Check ===")
+        env_vars = {
+            'OPENAI_API_KEY': os.getenv('OPENAI_API_KEY', '').startswith('sk-'),
+            'PERPLEXITY_API_KEY': os.getenv('PERPLEXITY_API_KEY', '').startswith('pplx-'),
+            'MODEL_NAME': os.getenv('MODEL_NAME'),
+            'PYTHONPATH': os.getenv('PYTHONPATH'),
+        }
+        for var, value in env_vars.items():
+            logger.info(f"{var}: {'Present' if value else 'Missing'}")
 
         # Get or create chat session
         if message.session_id not in chat_sessions:
-            print(f"Creating new chat session: {message.session_id}")
+            logger.info(f"Creating new chat session: {message.session_id}")
+            if not agent_factory:
+                logger.error("Agent factory not initialized!")
+                raise RuntimeError("Chat service not properly initialized")
             chat_sessions[message.session_id] = ChatSession(agent_factory)
         
         session = chat_sessions[message.session_id]
-        print("Chat session retrieved successfully")
-
-        # Verify environment variables
-        print("Checking environment variables...")
-        api_key = os.getenv('OPENAI_API_KEY')
-        perplexity_key = os.getenv('PERPLEXITY_API_KEY')
-        model_name = os.getenv('MODEL_NAME')
-        print(f"OpenAI API Key present: {bool(api_key)}")
-        print(f"Perplexity API Key present: {bool(perplexity_key)}")
-        print(f"Model name: {model_name}")
+        logger.info("Chat session retrieved successfully")
 
         # Process the message
         try:
-            print("Processing message through chat session...")
+            logger.info("Processing message through chat session...")
             response = await session.process_query(message.message)
             
             if not response:
-                print("Warning: Empty response received")
+                logger.warning("Empty response received")
                 return {
                     'type': ResponseTypes.ERROR,
                     'text': "I apologize, but I couldn't generate a response. Could you please rephrase your question?"
                 }
             
             if not isinstance(response, dict) or 'text' not in response:
-                print(f"Warning: Invalid response format: {response}")
+                logger.warning(f"Invalid response format: {response}")
                 return {
                     'type': ResponseTypes.ERROR,
                     'text': "I encountered an issue processing your request. Could you please provide more details about what you're looking for?"
                 }
             
-            print(f"Response generated successfully: {response.get('type', 'unknown type')}")
+            logger.info(f"Response generated successfully: {response.get('type', 'unknown type')}")
             return response
 
         except Exception as session_error:
-            print(f"Error in chat session: {str(session_error)}")
-            print(f"Error type: {type(session_error).__name__}")
-            print(f"Error details: {str(session_error)}")
+            logger.error(f"Error in chat session: {str(session_error)}", exc_info=True)
             error_type = type(session_error).__name__
             
             if 'API' in error_type:
@@ -164,11 +170,7 @@ async def chat(message: ChatMessage) -> Dict:
                 }
 
     except Exception as e:
-        print(f"Critical server error: {str(e)}")
-        print(f"Error type: {type(e).__name__}")
-        print(f"Error details: {str(e)}")
-        import traceback
-        print(f"Traceback: {traceback.format_exc()}")
+        logger.error("Critical server error", exc_info=True)
         return {
             'type': ResponseTypes.ERROR,
             'text': "I apologize, but I'm experiencing technical difficulties. Please try again in a moment."
