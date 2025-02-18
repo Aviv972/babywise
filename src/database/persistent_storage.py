@@ -21,7 +21,7 @@ class PersistentStorage:
                 logger.warning("MongoDB URI not found in environment variables")
                 return
 
-            # Add SSL configuration and connection options
+            # Configure MongoDB connection with proper TLS settings
             self.client = AsyncIOMotorClient(
                 mongodb_url,
                 serverSelectionTimeoutMS=5000,
@@ -30,7 +30,8 @@ class PersistentStorage:
                 maxPoolSize=1,
                 retryWrites=True,
                 tls=True,
-                tlsAllowInvalidCertificates=True  # For development only
+                tlsInsecure=True,  # For development only
+                directConnection=True
             )
             
             # Test the connection with timeout
@@ -42,8 +43,17 @@ class PersistentStorage:
             self.db = None
 
     def _is_connected(self) -> bool:
-        """Check if MongoDB is connected"""
-        return self.client is not None and self.db is not None
+        """Check if MongoDB is connected and handle connection errors gracefully"""
+        if not self.client or not self.db:
+            return False
+            
+        try:
+            # Ping the database to verify connection
+            self.client.admin.command('ping')
+            return True
+        except Exception as e:
+            logger.warning(f"MongoDB connection check failed: {str(e)}")
+            return False
 
     async def store_conversation(self, session_id: str, data: Dict[str, Any]):
         """Store conversation data"""

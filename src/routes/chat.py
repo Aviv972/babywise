@@ -43,7 +43,6 @@ async def chat(
         logger.info(f"Received message: {request.message}")
         
         # Process the query with context
-        # This ensures we maintain the core app logic for all messages
         response = await chat_session.process_query(request.message)
         
         end_time = datetime.utcnow()
@@ -55,41 +54,52 @@ async def chat(
             return JSONResponse(
                 content={
                     "type": "error",
-                    "text": "I apologize, but I couldn't generate a response. Could you please rephrase your question?"
+                    "text": "I apologize, but I couldn't generate a response. Could you please rephrase your question?",
+                    "metadata": {
+                        "timestamp": datetime.utcnow().isoformat(),
+                        "role": "assistant"
+                    }
                 }
             )
         
-        if not isinstance(response, dict) or 'text' not in response:
-            logger.warning(f"Invalid response format received: {response}")
-            return JSONResponse(
-                content={
-                    "type": "error",
-                    "text": "I encountered an issue processing your request. Could you please provide more details?"
-                }
-            )
+        # Ensure response has proper WhatsApp format
+        formatted_response = {
+            "type": response.get("type", "answer"),
+            "text": response.get("text", ""),
+            "metadata": {
+                "timestamp": datetime.utcnow().isoformat(),
+                "role": "assistant"
+            }
+        }
         
-        logger.info(f"Response generated successfully - Type: {response.get('type', 'unknown')}")
-        logger.info(f"Response text length: {len(response.get('text', ''))}")
+        # Add any additional fields from the original response
+        if "field" in response:
+            formatted_response["field"] = response["field"]
+        if "products" in response:
+            formatted_response["products"] = response["products"]
         
-        return JSONResponse(content=response)
+        logger.info(f"Response generated successfully - Type: {formatted_response['type']}")
+        logger.info(f"Response text length: {len(formatted_response['text'])}")
+        
+        return JSONResponse(content=formatted_response)
 
     except Exception as e:
         logger.error(f"Error in chat endpoint: {str(e)}", exc_info=True)
         error_type = type(e).__name__
         
-        if 'API' in error_type:
-            error_message = "I'm having trouble accessing external services. Please try again in a moment."
-        elif 'Context' in error_type:
-            error_message = "I need some more information to help you. Could you provide more details?"
-        else:
-            error_message = "I encountered an unexpected issue. Could you rephrase your question?"
+        error_response = {
+            "type": "error",
+            "text": "I encountered an unexpected issue. Could you rephrase your question?",
+            "metadata": {
+                "timestamp": datetime.utcnow().isoformat(),
+                "role": "assistant",
+                "error_type": error_type
+            }
+        }
         
         return JSONResponse(
             status_code=500,
-            content={
-                "type": "error",
-                "text": error_message
-            }
+            content=error_response
         )
     finally:
         logger.info("=== Chat Request Processing Complete ===\n")

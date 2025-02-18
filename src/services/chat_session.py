@@ -221,21 +221,14 @@ class ChatSession:
                 context=context
             )
             
-            # Format response in WhatsApp style while maintaining original format
+            # Format response in WhatsApp style
             response = {
-                'type': 'question' if raw_response.get('type') == ResponseTypes.FOLLOW_UP_QUESTION else 'answer',
+                'type': 'answer',
                 'text': raw_response.get('text', ''),
-                'metadata': {
-                    'timestamp': datetime.utcnow().isoformat(),
-                    'role': 'assistant'
-                }
+                'timestamp': datetime.utcnow().isoformat(),
+                'role': 'assistant',
+                'style': 'whatsapp'
             }
-            
-            # Add any additional fields from the original response
-            if raw_response.get('field'):
-                response['field'] = raw_response['field']
-            if raw_response.get('products'):
-                response['products'] = raw_response['products']
             
             # Store assistant response
             await self.db.store_message(
