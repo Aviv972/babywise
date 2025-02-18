@@ -4,18 +4,28 @@ from src.services.chat_session import ChatSession
 from fastapi.responses import JSONResponse
 from typing import Dict
 from src.services.service_container import container
+import logging
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 # Store chat sessions
 chat_sessions: Dict[str, ChatSession] = {}
 
 async def get_chat_session() -> ChatSession:
     """Get or create a chat session"""
-    if "manager" not in chat_sessions:
-        print("Initializing new chat session...")
-        chat_sessions["manager"] = ChatSession(container.agent_factory)
-    return chat_sessions["manager"]
+    try:
+        if "manager" not in chat_sessions:
+            logger.info("Initializing new chat session...")
+            if not container.agent_factory:
+                logger.error("Agent factory not initialized!")
+                raise RuntimeError("Chat service not properly initialized")
+            chat_sessions["manager"] = ChatSession(container.agent_factory)
+            logger.info("New chat session created successfully")
+        return chat_sessions["manager"]
+    except Exception as e:
+        logger.error(f"Error in get_chat_session: {str(e)}", exc_info=True)
+        raise
 
 @router.post("/")
 async def chat(
@@ -26,28 +36,55 @@ async def chat(
     Process a chat message with context management
     """
     try:
-        print(f"\n=== Received Message ===\n{request.message}")
+        logger.info("\n=== Starting Chat Request Processing ===")
+        logger.info(f"Received message: {request.message}")
         
         # Process the query with context
         response = await chat_session.process_query(request.message)
         
-        print(f"\n=== Final Response ===\n{response}")
+        if not response:
+            logger.warning("Empty response received from chat session")
+            return JSONResponse(
+                content={
+                    "type": "error",
+                    "text": "I apologize, but I couldn't generate a response. Could you please rephrase your question?"
+                }
+            )
         
-        # Return JSON response
-        return JSONResponse(content={
-            "type": response.get("type", "answer"),
-            "text": response.get("text", str(response))
-        })
+        if not isinstance(response, dict) or 'text' not in response:
+            logger.warning(f"Invalid response format received: {response}")
+            return JSONResponse(
+                content={
+                    "type": "error",
+                    "text": "I encountered an issue processing your request. Could you please provide more details?"
+                }
+            )
+        
+        logger.info(f"Response generated successfully - Type: {response.get('type', 'unknown')}")
+        logger.info(f"Response text length: {len(response.get('text', ''))}")
+        
+        return JSONResponse(content=response)
 
     except Exception as e:
-        print(f"Error in chat endpoint: {str(e)}")
+        logger.error(f"Error in chat endpoint: {str(e)}", exc_info=True)
+        error_type = type(e).__name__
+        
+        if 'API' in error_type:
+            error_message = "I'm having trouble accessing external services. Please try again in a moment."
+        elif 'Context' in error_type:
+            error_message = "I need some more information to help you. Could you provide more details?"
+        else:
+            error_message = "I encountered an unexpected issue. Could you rephrase your question?"
+        
         return JSONResponse(
             status_code=500,
             content={
                 "type": "error",
-                "text": str(e)
+                "text": error_message
             }
         )
+    finally:
+        logger.info("=== Chat Request Processing Complete ===\n")
 
 @router.get("/context")
 async def get_context(
