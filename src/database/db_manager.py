@@ -3,9 +3,13 @@ from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, relationship, scoped_session
 from datetime import datetime
 import os
-from typing import Optional, List, Dict
+from typing import Optional, List, Dict, Any
 import sqlite3
 import json
+from .persistent_storage import PersistentStorage
+import logging
+
+logger = logging.getLogger(__name__)
 
 Base = declarative_base()
 
@@ -46,10 +50,14 @@ class KnowledgeBase(Base):
 
 class DatabaseManager:
     def __init__(self):
-        # Use in-memory database for Vercel environment
+        # Use in-memory database for immediate access
         is_vercel = os.environ.get('VERCEL', False)
         self.db_url = 'file::memory:?cache=shared' if is_vercel else 'chatbot.db'
         self.conn: Optional[sqlite3.Connection] = None
+        
+        # Initialize persistent storage if in production
+        self.persistent = PersistentStorage() if is_vercel else None
+        
         self.create_tables()
 
     def get_connection(self) -> sqlite3.Connection:
@@ -58,10 +66,11 @@ class DatabaseManager:
         return self.conn
         
     def create_tables(self):
+        """Create necessary tables in SQLite"""
         conn = self.get_connection()
         cursor = conn.cursor()
         
-        # Create tables
+        # Create tables for immediate access
         cursor.execute('''
         CREATE TABLE IF NOT EXISTS chat_sessions (
             session_id TEXT PRIMARY KEY,
@@ -82,6 +91,110 @@ class DatabaseManager:
         ''')
         
         conn.commit()
+
+    async def store_message(self, session_id: str, message: str, role: str):
+        """Store message in both immediate and persistent storage"""
+        # Store in SQLite for immediate access
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            "INSERT INTO messages (session_id, message, role) VALUES (?, ?, ?)",
+            (session_id, message, role)
+        )
+        conn.commit()
+        
+        # Store in persistent storage if available
+        if self.persistent:
+            message_data = {
+                'message': message,
+                'role': role,
+                'metadata': {
+                    'timestamp': datetime.utcnow().isoformat(),
+                    'session_id': session_id
+                }
+            }
+            await self.persistent.store_message(session_id, message_data)
+
+    async def get_conversation_history(self, session_id: str, limit: int = 10) -> List[Dict]:
+        """Get conversation history from both storages"""
+        # Get immediate history from SQLite
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            """SELECT message, role, timestamp 
+               FROM messages 
+               WHERE session_id = ? 
+               ORDER BY timestamp DESC LIMIT ?""",
+            (session_id, limit)
+        )
+        
+        immediate_history = [
+            {'message': msg, 'role': role, 'timestamp': ts}
+            for msg, role, ts in cursor.fetchall()
+        ]
+        
+        # Get persistent history if available
+        if self.persistent:
+            persistent_history = await self.persistent.get_conversation_history(session_id, limit)
+            # Merge histories, prioritizing immediate history
+            return self._merge_histories(immediate_history, persistent_history)
+        
+        return immediate_history
+
+    def _merge_histories(self, immediate: List[Dict], persistent: List[Dict]) -> List[Dict]:
+        """Merge immediate and persistent histories, removing duplicates"""
+        merged = {}
+        
+        # Add immediate history first (higher priority)
+        for msg in immediate:
+            key = f"{msg['timestamp']}_{msg['message']}"
+            merged[key] = msg
+            
+        # Add persistent history
+        for msg in persistent:
+            key = f"{msg['timestamp']}_{msg['message']}"
+            if key not in merged:
+                merged[key] = msg
+                
+        # Sort by timestamp and return
+        return sorted(merged.values(), key=lambda x: x['timestamp'], reverse=True)
+
+    async def store_context(self, session_id: str, context_data: Dict[str, Any]):
+        """Store context in persistent storage"""
+        if self.persistent:
+            await self.persistent.store_context(session_id, context_data)
+
+    async def get_context(self, session_id: str) -> Optional[Dict]:
+        """Get context from persistent storage"""
+        if self.persistent:
+            return await self.persistent.get_context(session_id)
+        return None
+
+    async def store_knowledge_base_entry(self, entry: Dict[str, Any]):
+        """Store entry in knowledge base"""
+        if self.persistent:
+            await self.persistent.store_knowledge_base_entry(entry)
+
+    async def search_knowledge_base(self, query: str, threshold: float = 0.7) -> List[Dict]:
+        """Search knowledge base for relevant entries"""
+        if self.persistent:
+            return await self.persistent.search_knowledge_base(query, threshold)
+        return []
+
+    async def close(self):
+        """Close all database connections"""
+        if self.conn:
+            self.conn.close()
+        if self.persistent:
+            await self.persistent.close()
+
+    def __del__(self):
+        """Cleanup on object destruction"""
+        if self.conn:
+            try:
+                self.conn.close()
+            except:
+                pass
 
     def create_conversation(self, agent_type: str = None, original_query: str = None, metadata: dict = None) -> int:
         """Create a new conversation and return its ID"""
@@ -116,7 +229,7 @@ class DatabaseManager:
         )
         self.conn.commit()
 
-    def get_conversation_history(self, conversation_id: int, limit: int = 10) -> List[Dict]:
+    def get_conversation_history_immediate(self, conversation_id: int, limit: int = 10) -> List[Dict]:
         """Get conversation history with all associated data"""
         # Get messages
         cursor = self.conn.execute(
@@ -171,17 +284,6 @@ class DatabaseManager:
             (json.dumps(metadata), conversation_id)
         )
         self.conn.commit()
-
-    def close(self):
-        """Close the database connection"""
-        self.conn.close()
-
-    def __del__(self):
-        """Ensure database connection is closed when object is destroyed"""
-        try:
-            self.conn.close()
-        except:
-            pass
 
     def search_knowledge_base(self, query: str, category: str, threshold: float = 0.7) -> Optional[str]:
         """Search for existing relevant responses"""

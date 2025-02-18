@@ -205,25 +205,41 @@ class ChatSession:
     async def process_query(self, message: str) -> Dict[str, Any]:
         """Process a user query and return the response"""
         try:
-            # Store user message
-            conn = self.db.get_connection()
-            cursor = conn.cursor()
-            cursor.execute(
-                "INSERT INTO messages (session_id, message, role) VALUES (?, ?, ?)",
-                (self.session_id, message, 'user')
-            )
-            conn.commit()
+            # Store user message in both storages
+            await self.db.store_message(self.session_id, message, 'user')
+            
+            # Extract and store context
+            context = self._extract_and_store_context(message)
+            await self.db.store_context(self.session_id, context)
             
             # Get appropriate agent and process query
             agent = self.agent_factory.get_agent(message)
-            response = await agent.process_query(message)
+            
+            # Check knowledge base for similar queries
+            similar_responses = await self.db.search_knowledge_base(message)
+            
+            # Process with all available context
+            response = await agent.process_query(
+                message,
+                context=context,
+                similar_responses=similar_responses
+            )
             
             # Store assistant response
-            cursor.execute(
-                "INSERT INTO messages (session_id, message, role) VALUES (?, ?, ?)",
-                (self.session_id, response.get('text', ''), 'assistant')
+            await self.db.store_message(
+                self.session_id, 
+                response.get('text', ''), 
+                'assistant'
             )
-            conn.commit()
+            
+            # Store in knowledge base if it's a new type of query
+            if not similar_responses:
+                await self.db.store_knowledge_base_entry({
+                    'query': message,
+                    'response': response.get('text', ''),
+                    'agent_type': agent.__class__.__name__,
+                    'context': context
+                })
             
             return response
             
@@ -504,19 +520,27 @@ class ChatSession:
         self.conversation_id = self.db.create_conversation()
         self.logger.info(f"Reset session: Created new conversation with ID: {self.conversation_id}")
 
-    def get_state(self) -> Dict[str, Any]:
+    async def get_state(self) -> Dict[str, Any]:
         """Get the current state of the chat session"""
-        conn = self.db.get_connection()
-        cursor = conn.cursor()
-        cursor.execute(
-            "SELECT message, role FROM messages WHERE session_id = ? ORDER BY timestamp",
-            (self.session_id,)
-        )
-        messages = [{'message': msg, 'role': role} for msg, role in cursor.fetchall()]
-        return {
-            'session_id': self.session_id,
-            'messages': messages
-        }
+        try:
+            # Get messages from both storages
+            messages = await self.db.get_conversation_history(self.session_id)
+            
+            # Get context from persistent storage
+            context = await self.db.get_context(self.session_id)
+            
+            return {
+                'session_id': self.session_id,
+                'messages': messages,
+                'context': context
+            }
+        except Exception as e:
+            logger.error(f"Error getting session state: {str(e)}")
+            return {
+                'session_id': self.session_id,
+                'messages': [],
+                'context': {}
+            }
 
     def store_answer(self, field: str, answer: str) -> None:
         """Store an answer for a specific field in both memory and database"""
