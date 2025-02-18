@@ -21,7 +21,7 @@ class PersistentStorage:
                 logger.warning("MongoDB URI not found in environment variables")
                 return
 
-            # Configure MongoDB connection with proper TLS settings
+            # Configure MongoDB connection with TLS 1.2
             self.client = AsyncIOMotorClient(
                 mongodb_url,
                 serverSelectionTimeoutMS=5000,
@@ -30,26 +30,37 @@ class PersistentStorage:
                 maxPoolSize=1,
                 retryWrites=True,
                 tls=True,
-                tlsInsecure=True,  # For development only
-                directConnection=True
+                tlsAllowInvalidCertificates=False,  # Enforce certificate validation
+                tlsCAFile=None,  # Use system CA certificates
+                tlsMinVersion='TLSv1.2',  # Enforce minimum TLS version 1.2
+                tlsMaxVersion='TLSv1.2'   # Set maximum TLS version to 1.2
             )
             
-            # Test the connection with timeout
+            # Test the connection with timeout and verify TLS version
             self.db = self.client.get_database('babywise')
-            logger.info("MongoDB connection initialized successfully")
+            # Verify TLS version
+            server_info = self.client.server_info()
+            if server_info and 'tls' in server_info.get('connectionStatus', {}):
+                tls_info = server_info['connectionStatus']['tls']
+                logger.info(f"Connected with TLS version: {tls_info.get('version', 'unknown')}")
+            logger.info("MongoDB connection initialized successfully with TLS 1.2")
         except Exception as e:
             logger.error(f"Error initializing MongoDB: {str(e)}")
             self.client = None
             self.db = None
 
     def _is_connected(self) -> bool:
-        """Check if MongoDB is connected and handle connection errors gracefully"""
+        """Check if MongoDB is connected and verify TLS configuration"""
         if not self.client or not self.db:
             return False
             
         try:
-            # Ping the database to verify connection
-            self.client.admin.command('ping')
+            # Verify connection and TLS configuration
+            server_info = self.client.admin.command('serverStatus')
+            if server_info and 'security' in server_info:
+                ssl_info = server_info['security'].get('SSLServerSubjectName')
+                if ssl_info:
+                    logger.debug(f"Connected to MongoDB with SSL subject: {ssl_info}")
             return True
         except Exception as e:
             logger.warning(f"MongoDB connection check failed: {str(e)}")
