@@ -359,8 +359,8 @@ class DatabaseManager:
         )
         self.conn.commit()
 
-    def search_knowledge_base(self, query: str, category: str, threshold: float = 0.7) -> Optional[str]:
-        """Search for existing relevant responses"""
+    def search_knowledge_base_by_category(self, query: str, category: str, threshold: float = 0.7) -> Optional[str]:
+        """Search for existing relevant responses within a specific category"""
         session = self.Session()
         try:
             # Find similar queries in the same category

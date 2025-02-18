@@ -232,15 +232,6 @@ class ChatSession:
                 'assistant'
             )
             
-            # Store in knowledge base if it's a new type of query
-            if not similar_responses:
-                await self.db.store_knowledge_base_entry({
-                    'query': message,
-                    'response': response.get('text', ''),
-                    'agent_type': agent.__class__.__name__,
-                    'context': context
-                })
-            
             return response
             
         except Exception as e:

@@ -73,15 +73,11 @@ class PersistentStorage:
             message['timestamp'] = datetime.utcnow()
             message['session_id'] = session_id
 
-            # Add write concern and timeout
-            await self.db.messages.insert_one(
-                message,
-                write_concern={"w": 1, "wtimeout": 5000}
-            )
+            # Remove write_concern from insert_one
+            await self.db.messages.insert_one(message)
             logger.info(f"Stored message for session {session_id}")
         except Exception as e:
             logger.error(f"Error storing message: {str(e)}")
-            # Don't raise the exception, just log it
             return None
 
     async def get_conversation_history(self, session_id: str, limit: int = 10) -> List[Dict]:
@@ -113,17 +109,15 @@ class PersistentStorage:
             context_data['timestamp'] = datetime.utcnow()
             context_data['session_id'] = session_id
 
-            # Add write concern and timeout
+            # Remove write_concern from update_one
             await self.db.context.update_one(
                 {'session_id': session_id},
                 {'$set': context_data},
-                upsert=True,
-                write_concern={"w": 1, "wtimeout": 5000}
+                upsert=True
             )
             logger.info(f"Stored context for session {session_id}")
         except Exception as e:
             logger.error(f"Error storing context: {str(e)}")
-            # Don't raise the exception, just log it
             return None
 
     async def get_context(self, session_id: str) -> Optional[Dict]:
