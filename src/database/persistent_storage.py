@@ -22,15 +22,22 @@ class PersistentStorage:
                 return
 
             self.client = AsyncIOMotorClient(mongodb_url)
-            self.db = self.client.babywise
+            # Test the connection
+            self.db = self.client.get_database('babywise')
             logger.info("MongoDB connection initialized successfully")
         except Exception as e:
             logger.error(f"Error initializing MongoDB: {str(e)}")
-            raise
+            self.client = None
+            self.db = None
+
+    def _is_connected(self) -> bool:
+        """Check if MongoDB is connected"""
+        return self.client is not None and self.db is not None
 
     async def store_conversation(self, session_id: str, data: Dict[str, Any]):
         """Store conversation data"""
-        if not self.db:
+        if not self._is_connected():
+            logger.warning("MongoDB not connected, skipping persistent storage")
             return
 
         try:
@@ -49,7 +56,8 @@ class PersistentStorage:
 
     async def store_message(self, session_id: str, message: Dict[str, Any]):
         """Store a message in the conversation history"""
-        if not self.db:
+        if not self._is_connected():
+            logger.warning("MongoDB not connected, skipping persistent storage")
             return
 
         try:
@@ -63,7 +71,8 @@ class PersistentStorage:
 
     async def get_conversation_history(self, session_id: str, limit: int = 10) -> List[Dict]:
         """Retrieve conversation history"""
-        if not self.db:
+        if not self._is_connected():
+            logger.warning("MongoDB not connected, returning empty history")
             return []
 
         try:
@@ -79,7 +88,8 @@ class PersistentStorage:
 
     async def store_context(self, session_id: str, context_data: Dict[str, Any]):
         """Store context information"""
-        if not self.db:
+        if not self._is_connected():
+            logger.warning("MongoDB not connected, skipping context storage")
             return
 
         try:
@@ -97,7 +107,8 @@ class PersistentStorage:
 
     async def get_context(self, session_id: str) -> Optional[Dict]:
         """Retrieve context information"""
-        if not self.db:
+        if not self._is_connected():
+            logger.warning("MongoDB not connected, returning None for context")
             return None
 
         try:
@@ -109,7 +120,8 @@ class PersistentStorage:
 
     async def store_knowledge_base_entry(self, entry: Dict[str, Any]):
         """Store an entry in the knowledge base"""
-        if not self.db:
+        if not self._is_connected():
+            logger.warning("MongoDB not connected, skipping knowledge base entry")
             return
 
         try:
@@ -121,21 +133,21 @@ class PersistentStorage:
 
     async def search_knowledge_base(self, query: str, threshold: float = 0.7) -> List[Dict]:
         """Search the knowledge base for relevant entries"""
-        if not self.db:
+        if not self._is_connected():
+            logger.warning("MongoDB not connected, returning empty search results")
             return []
 
         try:
             # Using MongoDB's text search
             cursor = self.db.knowledge_base.find(
                 {
-                    '$text': {'$search': query},
-                    'score': {'$gt': threshold}
+                    '$text': {'$search': query}
                 },
                 {'score': {'$meta': 'textScore'}}
             ).sort([('score', {'$meta': 'textScore'})])
 
             results = await cursor.to_list(length=5)
-            return results
+            return [r for r in results if r.get('score', 0) >= threshold]
         except Exception as e:
             logger.error(f"Error searching knowledge base: {str(e)}")
             return []

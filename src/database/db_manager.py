@@ -56,7 +56,13 @@ class DatabaseManager:
         self.conn: Optional[sqlite3.Connection] = None
         
         # Initialize persistent storage if in production
-        self.persistent = PersistentStorage() if is_vercel else None
+        self.persistent = None
+        if is_vercel:
+            try:
+                self.persistent = PersistentStorage()
+            except Exception as e:
+                logger.error(f"Failed to initialize persistent storage: {str(e)}")
+                self.persistent = None
         
         self.create_tables()
 
@@ -144,8 +150,8 @@ class DatabaseManager:
             )
             conn.commit()
             
-            # Store in persistent storage if available
-            if self.persistent:
+            # Store in persistent storage if available and connected
+            if self.persistent and self.persistent._is_connected():
                 message_data = {
                     'message': message,
                     'role': role,
