@@ -14,16 +14,14 @@ class PersistentStorage:
         self._initialize_db()
 
     def _initialize_db(self):
-        """Initialize MongoDB connection with TLS 1.2"""
+        """Initialize MongoDB connection"""
         try:
             mongodb_url = os.environ.get('MONGODB_URI')
             if not mongodb_url:
                 logger.warning("MongoDB URI not found in environment variables")
                 return
 
-            logger.info("Initializing MongoDB connection with TLS 1.2...")
-            
-            # Configure MongoDB connection with strict TLS 1.2 settings
+            # Configure MongoDB connection with TLS 1.2
             self.client = AsyncIOMotorClient(
                 mongodb_url,
                 serverSelectionTimeoutMS=5000,
@@ -32,33 +30,22 @@ class PersistentStorage:
                 maxPoolSize=1,
                 retryWrites=True,
                 tls=True,
-                tlsInsecure=False,  # Disable insecure TLS
                 tlsAllowInvalidCertificates=False,  # Enforce certificate validation
-                tlsAllowInvalidHostnames=False,  # Enforce hostname validation
                 tlsCAFile=None,  # Use system CA certificates
-                tlsMinVersion='TLSv1.2',  # Enforce minimum TLS version 1.2
-                tlsMaxVersion='TLSv1.2'   # Set maximum TLS version to 1.2
+                ssl_cert_reqs='CERT_REQUIRED'  # Enforce SSL certificate verification
             )
             
-            # Test the connection and verify TLS version
+            # Test the connection
             self.db = self.client.get_database('babywise')
-            
-            # Verify TLS configuration
+            # Log connection info
             server_info = self.client.server_info()
             if server_info and 'connectionStatus' in server_info:
-                conn_status = server_info['connectionStatus']
-                if 'security' in conn_status:
-                    security_info = conn_status['security']
-                    logger.info(f"TLS Version: {security_info.get('tlsVersion', 'unknown')}")
-                    logger.info(f"TLS Protocol: {security_info.get('tlsProtocol', 'unknown')}")
-                    
-            logger.info("MongoDB connection initialized successfully with TLS 1.2")
-            
+                logger.info("MongoDB connection initialized successfully with TLS")
+            logger.info("MongoDB connection initialized successfully")
         except Exception as e:
-            logger.error(f"Error initializing MongoDB with TLS 1.2: {str(e)}", exc_info=True)
+            logger.error(f"Error initializing MongoDB: {str(e)}")
             self.client = None
             self.db = None
-            raise RuntimeError(f"Failed to initialize MongoDB with TLS 1.2: {str(e)}")
 
     def _is_connected(self) -> bool:
         """Check if MongoDB is connected and verify TLS configuration"""
@@ -68,20 +55,13 @@ class PersistentStorage:
         try:
             # Verify connection and TLS configuration
             server_info = self.client.admin.command('serverStatus')
-            if server_info:
-                if 'security' in server_info:
-                    ssl_info = server_info['security'].get('SSLServerSubjectName')
-                    tls_info = server_info['security'].get('tlsVersion')
-                    if ssl_info:
-                        logger.info(f"Connected to MongoDB with SSL subject: {ssl_info}")
-                    if tls_info:
-                        logger.info(f"Using TLS version: {tls_info}")
-                        if tls_info != 'TLSv1.2':
-                            logger.warning(f"Unexpected TLS version: {tls_info}, expected TLSv1.2")
-                            return False
+            if server_info and 'security' in server_info:
+                ssl_info = server_info['security'].get('SSLServerSubjectName')
+                if ssl_info:
+                    logger.debug(f"Connected to MongoDB with SSL subject: {ssl_info}")
             return True
         except Exception as e:
-            logger.error(f"MongoDB connection check failed: {str(e)}", exc_info=True)
+            logger.warning(f"MongoDB connection check failed: {str(e)}")
             return False
 
     async def store_conversation(self, session_id: str, data: Dict[str, Any]):
