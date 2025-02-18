@@ -9,6 +9,8 @@ import json
 from .persistent_storage import PersistentStorage
 import logging
 import asyncio
+from contextlib import asynccontextmanager
+from src.exceptions import DatabaseError
 
 logger = logging.getLogger(__name__)
 
@@ -58,21 +60,116 @@ class DatabaseManager:
         
         # Initialize persistent storage if in production
         self.persistent = None
+        
+    async def initialize(self):
+        """Initialize database connections and persistent storage"""
+        # Initialize persistent storage if in production
+        is_vercel = os.environ.get('VERCEL', False)
         if is_vercel:
             try:
                 self.persistent = PersistentStorage()
+                await self.persistent._initialize_db()
             except Exception as e:
                 logger.error(f"Failed to initialize persistent storage: {str(e)}")
                 self.persistent = None
         
-        self.create_tables()
+        await self.create_tables()
 
     def get_connection(self) -> sqlite3.Connection:
         if not self.conn:
             self.conn = sqlite3.connect(self.db_url, uri=True)
+            # Enable foreign keys and WAL mode for better transaction support
+            self.conn.execute("PRAGMA foreign_keys = ON")
+            self.conn.execute("PRAGMA journal_mode = WAL")
         return self.conn
-        
-    def create_tables(self):
+
+    @asynccontextmanager
+    async def transaction(self):
+        """Context manager for database transactions"""
+        conn = self.get_connection()
+        try:
+            # Start transaction
+            conn.execute("BEGIN TRANSACTION")
+            yield conn
+            # Commit if no errors
+            conn.commit()
+        except Exception as e:
+            # Rollback on error
+            conn.rollback()
+            logger.error(f"Transaction failed, rolling back: {str(e)}")
+            raise DatabaseError(f"Transaction failed: {str(e)}")
+
+    async def store_message_batch(self, messages: List[Dict[str, Any]]) -> bool:
+        """Store multiple messages in a single transaction"""
+        try:
+            async with self.transaction() as conn:
+                cursor = conn.cursor()
+                for msg in messages:
+                    session_id = msg.get('session_id')
+                    content = msg.get('content')
+                    role = msg.get('role')
+                    msg_type = msg.get('type', 'text')
+                    
+                    # Ensure chat session exists
+                    cursor.execute(
+                        "INSERT OR IGNORE INTO chat_sessions (session_id) VALUES (?)",
+                        (session_id,)
+                    )
+                    
+                    # Store the message
+                    cursor.execute(
+                        """INSERT INTO messages 
+                           (session_id, content, role, type) 
+                           VALUES (?, ?, ?, ?)""",
+                        (session_id, content, role, msg_type)
+                    )
+                
+                # Store in persistent storage if available
+                if self.persistent and await self.persistent._is_connected():
+                    # Create tasks for all messages
+                    tasks = [
+                        self.persistent.store_message(msg['session_id'], msg)
+                        for msg in messages
+                    ]
+                    # Execute all tasks concurrently
+                    await asyncio.gather(*tasks)
+                
+                return True
+                
+        except Exception as e:
+            logger.error(f"Error in batch message storage: {str(e)}")
+            return False
+
+    async def store_context_batch(self, session_id: str, context_items: List[Dict[str, Any]]) -> bool:
+        """Store multiple context items in a single transaction"""
+        try:
+            async with self.transaction() as conn:
+                cursor = conn.cursor()
+                for item in context_items:
+                    field = item.get('field')
+                    value = item.get('value')
+                    if field and value:
+                        cursor.execute(
+                            """INSERT INTO context_info 
+                               (conversation_id, field, value)
+                               VALUES (?, ?, ?)""",
+                            (session_id, field, value)
+                        )
+                
+                # Store in persistent storage if available
+                if self.persistent and await self.persistent._is_connected():
+                    await self.persistent.store_context(session_id, {
+                        'items': context_items,
+                        'timestamp': datetime.utcnow().isoformat()
+                    })
+                
+                return True
+                
+        except Exception as e:
+            logger.error(f"Error in batch context storage: {str(e)}")
+            return False
+
+    async def create_tables(self):
         """Create necessary tables in SQLite"""
         conn = self.get_connection()
         cursor = conn.cursor()
