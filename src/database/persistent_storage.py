@@ -4,6 +4,7 @@ import os
 import logging
 from datetime import datetime
 import json
+import asyncio
 
 logger = logging.getLogger(__name__)
 
@@ -11,9 +12,11 @@ class PersistentStorage:
     def __init__(self):
         self.client = None
         self.db = None
-        self._initialize_db()
+        # Create event loop for initialization
+        loop = asyncio.get_event_loop()
+        loop.run_until_complete(self._initialize_db())
 
-    def _initialize_db(self):
+    async def _initialize_db(self):
         """Initialize MongoDB connection"""
         try:
             mongodb_url = os.environ.get('MONGODB_URI')
@@ -27,18 +30,18 @@ class PersistentStorage:
                 serverSelectionTimeoutMS=5000,
                 connectTimeoutMS=5000,
                 socketTimeoutMS=5000,
-                maxPoolSize=50,  # Increased from 1 for better performance
+                maxPoolSize=50,
                 retryWrites=True,
                 tls=True,
                 tlsAllowInvalidCertificates=False,
-                tlsAllowInvalidHostnames=False,  # Added for stricter security
+                tlsAllowInvalidHostnames=False,
             )
             
             # Test the connection
             self.db = self.client.get_database('babywise')
             
-            # Log connection info
-            server_info = self.client.server_info()
+            # Log connection info - use await for async operations
+            server_info = await self.client.server_info()
             if server_info:
                 logger.info("MongoDB connection initialized successfully")
                 
@@ -53,14 +56,14 @@ class PersistentStorage:
             self.client = None
             self.db = None
 
-    def _is_connected(self) -> bool:
+    async def _is_connected(self) -> bool:
         """Check if MongoDB is connected and verify TLS configuration"""
         if not self.client or not self.db:
             return False
             
         try:
-            # Verify connection and TLS configuration
-            server_info = self.client.admin.command('serverStatus')
+            # Verify connection and TLS configuration - use await
+            server_info = await self.client.admin.command('serverStatus')
             if server_info and 'security' in server_info:
                 ssl_info = server_info['security'].get('SSLServerSubjectName')
                 if ssl_info:
@@ -72,7 +75,7 @@ class PersistentStorage:
 
     async def store_conversation(self, session_id: str, data: Dict[str, Any]):
         """Store conversation data"""
-        if not self._is_connected():
+        if not await self._is_connected():
             logger.warning("MongoDB not connected, skipping persistent storage")
             return
 
@@ -92,7 +95,7 @@ class PersistentStorage:
 
     async def store_message(self, session_id: str, message: Dict[str, Any]):
         """Store a message in the conversation history"""
-        if not self._is_connected():
+        if not await self._is_connected():
             logger.warning("MongoDB not connected, skipping persistent storage")
             return
 
@@ -100,26 +103,22 @@ class PersistentStorage:
             message['timestamp'] = datetime.utcnow()
             message['session_id'] = session_id
 
-            # Store message without waiting for response
             await self.db.messages.insert_one(message)
             logger.debug(f"Stored message for session {session_id}")
         except Exception as e:
             logger.error(f"Error storing message: {str(e)}")
-            # Don't raise the exception, just log it
             return None
 
     async def get_conversation_history(self, session_id: str, limit: int = 10) -> List[Dict]:
         """Retrieve conversation history"""
-        if not self._is_connected():
+        if not await self._is_connected():
             logger.warning("MongoDB not connected, returning empty history")
             return []
 
         try:
-            # Add maxTimeMS to limit query execution time
             cursor = self.db.messages.find(
                 {'session_id': session_id}
             ).sort('timestamp', -1).limit(limit)
-            cursor.max_time_ms(5000)  # 5 seconds timeout
             
             messages = await cursor.to_list(length=limit)
             return messages
@@ -129,7 +128,7 @@ class PersistentStorage:
 
     async def store_context(self, session_id: str, context_data: Dict[str, Any]):
         """Store context information"""
-        if not self._is_connected():
+        if not await self._is_connected():
             logger.warning("MongoDB not connected, skipping context storage")
             return
 
@@ -137,7 +136,6 @@ class PersistentStorage:
             context_data['timestamp'] = datetime.utcnow()
             context_data['session_id'] = session_id
 
-            # Remove write_concern from update_one
             await self.db.context.update_one(
                 {'session_id': session_id},
                 {'$set': context_data},
@@ -150,7 +148,7 @@ class PersistentStorage:
 
     async def get_context(self, session_id: str) -> Optional[Dict]:
         """Retrieve context information"""
-        if not self._is_connected():
+        if not await self._is_connected():
             logger.warning("MongoDB not connected, returning None for context")
             return None
 
@@ -163,7 +161,7 @@ class PersistentStorage:
 
     async def store_knowledge_base_entry(self, entry: Dict[str, Any]):
         """Store an entry in the knowledge base"""
-        if not self._is_connected():
+        if not await self._is_connected():
             logger.warning("MongoDB not connected, skipping knowledge base entry")
             return
 
@@ -176,12 +174,11 @@ class PersistentStorage:
 
     async def search_knowledge_base(self, query: str, threshold: float = 0.7) -> List[Dict]:
         """Search the knowledge base for relevant entries"""
-        if not self._is_connected():
+        if not await self._is_connected():
             logger.warning("MongoDB not connected, returning empty search results")
             return []
 
         try:
-            # Using MongoDB's text search
             cursor = self.db.knowledge_base.find(
                 {
                     '$text': {'$search': query}
