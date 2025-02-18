@@ -21,8 +21,17 @@ class PersistentStorage:
                 logger.warning("MongoDB URI not found in environment variables")
                 return
 
-            self.client = AsyncIOMotorClient(mongodb_url)
-            # Test the connection
+            # Add connection timeout and server selection timeout
+            self.client = AsyncIOMotorClient(
+                mongodb_url,
+                serverSelectionTimeoutMS=5000,  # 5 seconds timeout for server selection
+                connectTimeoutMS=5000,          # 5 seconds timeout for initial connection
+                socketTimeoutMS=5000,           # 5 seconds timeout for socket operations
+                maxPoolSize=1,                  # Limit connection pool for serverless
+                retryWrites=True                # Enable retrying write operations
+            )
+            
+            # Test the connection with timeout
             self.db = self.client.get_database('babywise')
             logger.info("MongoDB connection initialized successfully")
         except Exception as e:
@@ -64,10 +73,16 @@ class PersistentStorage:
             message['timestamp'] = datetime.utcnow()
             message['session_id'] = session_id
 
-            await self.db.messages.insert_one(message)
+            # Add write concern and timeout
+            await self.db.messages.insert_one(
+                message,
+                write_concern={"w": 1, "wtimeout": 5000}
+            )
             logger.info(f"Stored message for session {session_id}")
         except Exception as e:
             logger.error(f"Error storing message: {str(e)}")
+            # Don't raise the exception, just log it
+            return None
 
     async def get_conversation_history(self, session_id: str, limit: int = 10) -> List[Dict]:
         """Retrieve conversation history"""
@@ -76,9 +91,11 @@ class PersistentStorage:
             return []
 
         try:
+            # Add maxTimeMS to limit query execution time
             cursor = self.db.messages.find(
                 {'session_id': session_id}
             ).sort('timestamp', -1).limit(limit)
+            cursor.max_time_ms(5000)  # 5 seconds timeout
             
             messages = await cursor.to_list(length=limit)
             return messages
@@ -96,14 +113,18 @@ class PersistentStorage:
             context_data['timestamp'] = datetime.utcnow()
             context_data['session_id'] = session_id
 
+            # Add write concern and timeout
             await self.db.context.update_one(
                 {'session_id': session_id},
                 {'$set': context_data},
-                upsert=True
+                upsert=True,
+                write_concern={"w": 1, "wtimeout": 5000}
             )
             logger.info(f"Stored context for session {session_id}")
         except Exception as e:
             logger.error(f"Error storing context: {str(e)}")
+            # Don't raise the exception, just log it
+            return None
 
     async def get_context(self, session_id: str) -> Optional[Dict]:
         """Retrieve context information"""

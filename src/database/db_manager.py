@@ -8,6 +8,7 @@ import sqlite3
 import json
 from .persistent_storage import PersistentStorage
 import logging
+import asyncio
 
 logger = logging.getLogger(__name__)
 
@@ -151,6 +152,7 @@ class DatabaseManager:
             conn.commit()
             
             # Store in persistent storage if available and connected
+            # Don't wait for MongoDB operation to complete
             if self.persistent and self.persistent._is_connected():
                 message_data = {
                     'message': message,
@@ -160,12 +162,15 @@ class DatabaseManager:
                         'session_id': session_id
                     }
                 }
-                await self.persistent.store_message(session_id, message_data)
+                # Fire and forget MongoDB operation
+                asyncio.create_task(self.persistent.store_message(session_id, message_data))
                 
             logger.info(f"Message stored successfully for session {session_id}")
+            return True
         except Exception as e:
             logger.error(f"Error storing message: {str(e)}")
-            raise
+            # Return False but don't raise exception to prevent request timeout
+            return False
 
     async def get_conversation_history(self, session_id: str, limit: int = 10) -> List[Dict]:
         """Get conversation history from both storages"""
@@ -192,10 +197,17 @@ class DatabaseManager:
             ]
             
             # Get persistent history if available
-            if self.persistent:
-                persistent_history = await self.persistent.get_conversation_history(session_id, limit)
-                # Merge histories, prioritizing immediate history
-                return self._merge_histories(immediate_history, persistent_history)
+            # Use asyncio.wait_for to add timeout
+            if self.persistent and self.persistent._is_connected():
+                try:
+                    persistent_history = await asyncio.wait_for(
+                        self.persistent.get_conversation_history(session_id, limit),
+                        timeout=3.0  # 3 seconds timeout
+                    )
+                    return self._merge_histories(immediate_history, persistent_history)
+                except asyncio.TimeoutError:
+                    logger.warning("MongoDB operation timed out, returning SQLite history only")
+                    return immediate_history
             
             return immediate_history
             
