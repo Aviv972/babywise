@@ -16,6 +16,9 @@ import json
 import re
 import logging
 import uuid
+import asyncio
+from contextlib import asynccontextmanager
+from src.exceptions import ModelProcessingError, DatabaseError, ValidationError
 
 logger = logging.getLogger(__name__)
 
@@ -31,7 +34,7 @@ class ChatSession:
         # Initialize a new conversation in the database
         self.conversation_id = self.db.create_conversation()
         self.logger = logging.getLogger(__name__)
-        self.logger.info(f"Created new chat session with ID: {self.conversation_id}")
+        self.logger.info(f"Created new chat session with ID: {self.session_id}")
 
     def _initialize_session(self):
         """Initialize a new chat session in the database"""
@@ -202,310 +205,129 @@ class ChatSession:
         # Add other agent type determinations here
         return "general"
 
+    def _validate_message(self, message: str) -> bool:
+        """Validate incoming message format and content"""
+        if not message or not isinstance(message, str):
+            return False
+        if len(message.strip()) == 0:
+            return False
+        # Add more validation as needed
+        return True
+
+    def _create_error_response(self, error_message: str) -> Dict:
+        """Create a standardized error response"""
+        return {
+            'type': 'error',
+            'text': error_message,
+            'timestamp': datetime.utcnow().isoformat(),
+            'role': 'assistant'
+        }
+
+    def _create_message_object(self, content: str, role: str) -> Dict:
+        """Create a standardized message object for storage"""
+        return {
+            'content': content,
+            'role': role,
+            'timestamp': datetime.utcnow().isoformat(),
+            'session_id': self.session_id,
+            'metadata': {
+                'agent_type': self.current_agent.__class__.__name__ if self.current_agent else None
+            }
+        }
+
+    @asynccontextmanager
+    async def _get_db_transaction(self):
+        """Context manager for database transactions"""
+        try:
+            # Start transaction
+            yield
+        except Exception as e:
+            logger.error(f"Database transaction failed: {str(e)}")
+            raise DatabaseError("Failed to store conversation data")
+
     async def process_query(self, message: str) -> Dict[str, Any]:
         """Process a user query and return the response"""
         try:
-            # Store user message in both storages
-            await self.db.store_message(self.session_id, message, 'user')
-            
-            # Extract and store context
-            context = self._extract_and_store_context(message)
-            await self.db.store_context(self.session_id, context)
-            
-            # Get appropriate agent and process query
-            agent = self.agent_factory.get_agent(message)
-            
-            # Process with context only
-            raw_response = await agent.process_query(
-                message,
-                context=context
-            )
-            
-            # Format response in WhatsApp style
-            response = {
-                'type': 'answer',
-                'text': raw_response.get('text', ''),
+            # 1. Validate message
+            if not self._validate_message(message):
+                return self._create_error_response(
+                    "Please provide a valid message"
+                )
+
+            # 2. Get appropriate agent and process query
+            try:
+                self.current_agent = self.agent_factory.get_agent(message)
+                logger.info(f"Selected agent: {self.current_agent.__class__.__name__}")
+                
+                # Process with context
+                response = await self.current_agent.process_query(
+                    message,
+                    context=self.context.get_state()
+                )
+                
+                if not response or 'text' not in response:
+                    raise ModelProcessingError("Invalid response from model")
+                    
+            except Exception as e:
+                logger.error(f"Model processing error: {str(e)}")
+                raise ModelProcessingError(str(e))
+
+            # 3. Store conversation data in transaction
+            try:
+                async with self._get_db_transaction():
+                    # Store user message
+                    user_message = self._create_message_object(message, 'user')
+                    await self.db.store_message(self.session_id, user_message)
+
+                    # Store assistant response
+                    assistant_message = self._create_message_object(response['text'], 'assistant')
+                    await self.db.store_message(self.session_id, assistant_message)
+
+                    # Extract and store context
+                    if context := self._extract_and_store_context(message):
+                        await self.db.store_context(self.session_id, context)
+                        
+                    logger.info("Successfully stored conversation data")
+                    
+            except Exception as e:
+                logger.error(f"Database error: {str(e)}")
+                # Continue with response even if storage fails
+                logger.warning("Continuing with response despite storage failure")
+
+            # 4. Format and return response
+            formatted_response = {
+                'type': response.get('type', 'answer'),
+                'text': response['text'],
                 'timestamp': datetime.utcnow().isoformat(),
                 'role': 'assistant',
-                'style': 'whatsapp'
+                'metadata': {
+                    'agent_type': self.current_agent.__class__.__name__,
+                    'confidence': response.get('confidence', 1.0)
+                }
             }
-            
-            # Store assistant response
-            await self.db.store_message(
-                self.session_id, 
-                response['text'], 
-                'assistant'
+
+            return formatted_response
+
+        except ModelProcessingError as e:
+            logger.error(f"Model processing error: {str(e)}")
+            return self._create_error_response(
+                "I'm having trouble processing your request. Please try again."
             )
             
-            return response
+        except DatabaseError as e:
+            logger.error(f"Database error: {str(e)}")
+            # If we have a response, return it despite DB error
+            if 'formatted_response' in locals():
+                return formatted_response
+            return self._create_error_response(
+                "I processed your request but couldn't save the conversation."
+            )
             
         except Exception as e:
-            logger.error(f"Error processing query: {str(e)}", exc_info=True)
-            raise
-
-    async def _evaluate_context_sufficiency(self, query: str, context: Dict) -> bool:
-        """Determine if we have sufficient context to provide a meaningful response"""
-        evaluation_prompt = f"""
-        Based on:
-        - Original Query: {context['original_query']}
-        - Current Query: {query}
-        - Gathered Info: {json.dumps(context['gathered_info'], indent=2)}
-        
-        Determine if we have sufficient context to provide a meaningful response.
-        Consider:
-        1. Critical information needed for this type of query
-        2. Quality and relevance of gathered information
-        3. Relationship between current query and original question
-        
-        Return ONLY 'true' if we have sufficient context, or 'false' if we need more information.
-        """
-        
-        result = await self.current_agent.llm_service.evaluate_context(evaluation_prompt)
-        return result.lower() == 'true'
-
-    async def _generate_follow_up_question(self, query: str, context: Dict) -> Dict:
-        """Generate a contextually relevant follow-up question"""
-        prompt = f"""
-        You are an AI assistant helping with baby-related queries.
-        Based on the following context:
-
-        ORIGINAL QUERY: {context['original_query']}
-
-        CURRENT INFORMATION:
-        {json.dumps(context['gathered_info'], indent=2)}
-
-        CONVERSATION HISTORY:
-        {self.context.get_formatted_conversation_history()}
-
-        Your task is to:
-        1. Analyze what critical information is still needed
-        2. Consider the natural flow of conversation
-        3. Generate ONE follow-up question that:
-           - Is most relevant to answering the original query
-           - Builds upon existing context
-           - Is phrased conversationally
-           - Uses the same language as the original query
-
-        The question should feel like a natural part of the conversation, not an interrogation.
-        
-        Return the question in JSON format:
-        {{
-            "type": "follow_up_question",
-            "field": "the_field_name",
-            "question": "your_question_here"
-        }}
-        """
-        
-        response = await self.current_agent.llm_service.generate_response(prompt)
-        return json.loads(response['text'])
-
-    async def _generate_response(self, query: str, context: Dict) -> Dict:
-        """Generate a comprehensive response using all available context"""
-        prompt = f"""
-        You are a friendly and knowledgeable parenting assistant.
-        
-        CURRENT QUESTION: {query}
-        ORIGINAL QUERY: {context['original_query']}
-
-        WHAT WE KNOW:
-        {self._format_gathered_info(context)}
-
-        CONVERSATION HISTORY:
-        {self._format_conversation_history(context.get('conversation_history', []))}
-
-        Provide a response that:
-        1. Shows empathy and understanding
-        2. Directly answers their question first
-        3. Gives practical, actionable advice
-        4. Uses simple, clear language
-        5. Includes helpful tips when relevant
-        6. Maintains a warm, supportive tone
-
-        Remember:
-        - Parents are often tired and busy
-        - Focus on practical solutions
-        - Be encouraging and supportive
-        - Use the same language as the parent
-        - Keep responses concise but complete
-        """
-        
-        response = await self.current_agent.llm_service.generate_response(prompt)
-        return {
-            'type': ResponseTypes.TEXT,
-            'text': response['text']
-        }
-
-    def _format_gathered_info(self, context: Dict) -> str:
-        """Format gathered information in a clear, readable way"""
-        gathered_info = context.get('gathered_info', {})
-        if not gathered_info:
-            return "No additional context available yet"
-
-        formatted_info = []
-        for field, value in gathered_info.items():
-            # Make the field name more readable
-            readable_field = field.replace('_', ' ').title()
-            formatted_info.append(f"- {readable_field}: {value}")
-        
-        return '\n'.join(formatted_info)
-
-    def _format_conversation_history(self, history: List[Dict]) -> str:
-        """Format conversation history in a clear, concise way"""
-        if not history:
-            return "No previous conversation"
-
-        formatted_history = []
-        # Only include last 3 exchanges for context
-        for exchange in history[-3:]:
-            formatted_history.extend([
-                f"Parent: {exchange.get('query', '')}",
-                f"Assistant: {exchange.get('response', '')}\n"
-            ])
-        
-        return '\n'.join(formatted_history)
-
-    def _prepare_enhanced_context(self, query: str) -> Dict:
-        """Prepare enhanced context for LLM processing"""
-        return {
-            'original_query': self.context.original_query,
-            'current_query': query,
-            'gathered_info': self.context.gathered_info,
-            'conversation_history': self.context.get_recent_history(3),  # Last 3 exchanges
-            'agent_type': self.context.agent_type,
-            'context_relevance': self.context.context_relevance_scores
-        }
-
-    def _process_response(self, query: str, response: Dict) -> None:
-        """Process and store response with enhanced context tracking"""
-        # Add response to conversation history
-        self.context.add_to_history({
-            'role': MessageRoles.MODEL,
-            'content': response.get('text', response.get('question', '')),
-            'metadata': {
-                'type': response.get('type'),
-                'field': response.get('field'),
-                'relevance_score': self.context._calculate_relevance_score(
-                    response.get('text', response.get('question', ''))
-                )
-            }
-        })
-
-        # If this was an answer to a specific field, store it
-        if response.get('type') == ResponseTypes.FOLLOW_UP_QUESTION:
-            self._extract_and_store_field_info(query, response.get('field'))
-
-    def _extract_and_store_field_info(self, query: str, field: str) -> None:
-        """Extract and store information for a specific field from the query"""
-        if not field:
-            return
-            
-        # Extract information based on field type
-        value = None
-        if field == 'budget':
-            value = self._extract_budget(query)
-        elif field == 'baby_age':
-            value = self._extract_age_from_query(query)
-        elif field == 'preferences':
-            value = self._extract_preferences(query)
-        elif field == 'usage':
-            value = self._extract_usage(query)
-            
-        if value:
-            self.context.add_clarification(field, value)
-
-    def _has_critical_information(self) -> bool:
-        """Check if we have enough critical information to provide a meaningful response"""
-        if not self.context.agent_type:
-            return True  # For general queries, we can always try to provide a response
-            
-        critical_fields = {
-            AgentTypes.BABY_GEAR: ['budget', 'preferences'],  # Only really need budget and preferences
-            AgentTypes.SLEEP_ROUTINE: ['baby_age'],  # Just need age for initial sleep advice
-            AgentTypes.FEEDING: ['baby_age'],  # Just need age for initial feeding advice
-            AgentTypes.MEDICAL_HEALTH: ['symptoms'],  # Need symptoms at minimum
-            AgentTypes.DEVELOPMENT: ['baby_age']  # Need age for development advice
-        }
-        
-        required = critical_fields.get(self.context.agent_type, [])
-        if not required:
-            return True  # If no critical fields defined, we can respond
-            
-        return any(field in self.context.gathered_info for field in required)
-
-    def _get_missing_critical_fields(self) -> List[str]:
-        """Get list of critical fields that are still missing"""
-        if not self.context.agent_type:
-            return []
-            
-        critical_fields = {
-            AgentTypes.BABY_GEAR: ['budget', 'preferences'],
-            AgentTypes.SLEEP_ROUTINE: ['baby_age'],
-            AgentTypes.FEEDING: ['baby_age'],
-            AgentTypes.MEDICAL_HEALTH: ['symptoms'],
-            AgentTypes.DEVELOPMENT: ['baby_age']
-        }
-        
-        required = critical_fields.get(self.context.agent_type, [])
-        return [field for field in required if field not in self.context.gathered_info]
-
-    def _extract_query_metadata(self, query: str) -> Dict[str, Any]:
-        """Extract metadata from user query to enhance context tracking"""
-        metadata = {
-            'timestamp': datetime.utcnow().isoformat(),
-            'query_length': len(query),
-            'identified_topics': self._identify_topics(query),
-            'potential_fields': self._identify_potential_fields(query)
-        }
-        return metadata
-
-    def _extract_response_metadata(self, response: Dict) -> Dict[str, Any]:
-        """Extract metadata from model response to enhance context tracking"""
-        content = response.get('text', response.get('question', ''))
-        metadata = {
-            'timestamp': datetime.utcnow().isoformat(),
-            'response_type': response.get('type'),
-            'identified_topics': self._identify_topics(content),
-            'addressed_fields': response.get('addressed_fields', [])
-        }
-        return metadata
-
-    def _identify_topics(self, text: str) -> List[str]:
-        """Identify topics in text for better context tracking"""
-        text_lower = text.lower()
-        topics = []
-        
-        topic_indicators = {
-            'sleep': ['sleep', 'nap', 'bedtime', 'night', 'wake'],
-            'feeding': ['feed', 'eat', 'food', 'nutrition', 'milk'],
-            'health': ['health', 'doctor', 'sick', 'fever', 'medicine'],
-            'development': ['growth', 'milestone', 'develop', 'skill', 'learn'],
-            'gear': ['stroller', 'crib', 'car seat', 'bottle', 'diaper']
-        }
-        
-        for topic, indicators in topic_indicators.items():
-            if any(indicator in text_lower for indicator in indicators):
-                topics.append(topic)
-                
-        return topics
-
-    def _identify_potential_fields(self, query: str) -> List[str]:
-        """Identify potential fields that might need clarification"""
-        query_lower = query.lower()
-        potential_fields = []
-        
-        field_indicators = {
-            QuestionFields.BUDGET: ['cost', 'price', 'budget', 'afford'],
-            QuestionFields.BABY_AGE: ['month', 'year', 'age', 'old'],
-            QuestionFields.SLEEP_PATTERN: ['sleep', 'nap', 'night', 'wake'],
-            QuestionFields.FEEDING_SCHEDULE: ['feed', 'eat', 'meal', 'time'],
-            QuestionFields.HEALTH_ISSUES: ['health', 'sick', 'issue', 'problem']
-        }
-        
-        for field, indicators in field_indicators.items():
-            if any(indicator in query_lower for indicator in indicators):
-                potential_fields.append(field)
-                
-        return potential_fields
+            logger.error(f"Unexpected error: {str(e)}")
+            return self._create_error_response(
+                "An unexpected error occurred. Please try again."
+            )
 
     def reset(self) -> None:
         """Reset the session state and start a new conversation"""
