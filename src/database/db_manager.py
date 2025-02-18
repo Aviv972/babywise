@@ -70,7 +70,19 @@ class DatabaseManager:
         conn = self.get_connection()
         cursor = conn.cursor()
         
-        # Create tables for immediate access
+        # Create conversations table
+        cursor.execute('''
+        CREATE TABLE IF NOT EXISTS conversations (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            agent_type TEXT,
+            original_query TEXT,
+            metadata TEXT,
+            user_id TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+        ''')
+        
+        # Create chat sessions table
         cursor.execute('''
         CREATE TABLE IF NOT EXISTS chat_sessions (
             session_id TEXT PRIMARY KEY,
@@ -79,67 +91,111 @@ class DatabaseManager:
         )
         ''')
         
+        # Create messages table
         cursor.execute('''
         CREATE TABLE IF NOT EXISTS messages (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             session_id TEXT,
-            message TEXT,
+            conversation_id INTEGER,
+            content TEXT,
             role TEXT,
-            timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (session_id) REFERENCES chat_sessions(session_id)
+            type TEXT,
+            metadata TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (session_id) REFERENCES chat_sessions(session_id),
+            FOREIGN KEY (conversation_id) REFERENCES conversations(id)
+        )
+        ''')
+        
+        # Create context_info table
+        cursor.execute('''
+        CREATE TABLE IF NOT EXISTS context_info (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            conversation_id INTEGER,
+            field TEXT,
+            value TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (conversation_id) REFERENCES conversations(id)
         )
         ''')
         
         conn.commit()
+        logger.info("All SQLite tables created successfully")
 
     async def store_message(self, session_id: str, message: str, role: str):
         """Store message in both immediate and persistent storage"""
-        # Store in SQLite for immediate access
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        cursor.execute(
-            "INSERT INTO messages (session_id, message, role) VALUES (?, ?, ?)",
-            (session_id, message, role)
-        )
-        conn.commit()
-        
-        # Store in persistent storage if available
-        if self.persistent:
-            message_data = {
-                'message': message,
-                'role': role,
-                'metadata': {
-                    'timestamp': datetime.utcnow().isoformat(),
-                    'session_id': session_id
+        try:
+            # Store in SQLite for immediate access
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            
+            # Ensure chat session exists
+            cursor.execute(
+                "INSERT OR IGNORE INTO chat_sessions (session_id) VALUES (?)",
+                (session_id,)
+            )
+            
+            # Store the message
+            cursor.execute(
+                """INSERT INTO messages 
+                   (session_id, content, role, type) 
+                   VALUES (?, ?, ?, ?)""",
+                (session_id, message, role, 'text')
+            )
+            conn.commit()
+            
+            # Store in persistent storage if available
+            if self.persistent:
+                message_data = {
+                    'message': message,
+                    'role': role,
+                    'metadata': {
+                        'timestamp': datetime.utcnow().isoformat(),
+                        'session_id': session_id
+                    }
                 }
-            }
-            await self.persistent.store_message(session_id, message_data)
+                await self.persistent.store_message(session_id, message_data)
+                
+            logger.info(f"Message stored successfully for session {session_id}")
+        except Exception as e:
+            logger.error(f"Error storing message: {str(e)}")
+            raise
 
     async def get_conversation_history(self, session_id: str, limit: int = 10) -> List[Dict]:
         """Get conversation history from both storages"""
-        # Get immediate history from SQLite
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        cursor.execute(
-            """SELECT message, role, timestamp 
-               FROM messages 
-               WHERE session_id = ? 
-               ORDER BY timestamp DESC LIMIT ?""",
-            (session_id, limit)
-        )
-        
-        immediate_history = [
-            {'message': msg, 'role': role, 'timestamp': ts}
-            for msg, role, ts in cursor.fetchall()
-        ]
-        
-        # Get persistent history if available
-        if self.persistent:
-            persistent_history = await self.persistent.get_conversation_history(session_id, limit)
-            # Merge histories, prioritizing immediate history
-            return self._merge_histories(immediate_history, persistent_history)
-        
-        return immediate_history
+        try:
+            # Get immediate history from SQLite
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            cursor.execute(
+                """SELECT content, role, type, created_at 
+                   FROM messages 
+                   WHERE session_id = ? 
+                   ORDER BY created_at DESC LIMIT ?""",
+                (session_id, limit)
+            )
+            
+            immediate_history = [
+                {
+                    'message': msg,
+                    'role': role,
+                    'type': msg_type,
+                    'timestamp': ts
+                }
+                for msg, role, msg_type, ts in cursor.fetchall()
+            ]
+            
+            # Get persistent history if available
+            if self.persistent:
+                persistent_history = await self.persistent.get_conversation_history(session_id, limit)
+                # Merge histories, prioritizing immediate history
+                return self._merge_histories(immediate_history, persistent_history)
+            
+            return immediate_history
+            
+        except Exception as e:
+            logger.error(f"Error retrieving conversation history: {str(e)}")
+            return []
 
     def _merge_histories(self, immediate: List[Dict], persistent: List[Dict]) -> List[Dict]:
         """Merge immediate and persistent histories, removing duplicates"""
