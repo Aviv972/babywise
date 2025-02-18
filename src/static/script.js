@@ -6,6 +6,7 @@ document.addEventListener('DOMContentLoaded', function() {
     
     let awaitingAnswer = false;
     let currentField = null;
+    let sessionId = 'default';  // Add session ID
 
     // Function to detect text direction
     function isRTL(text) {
@@ -89,18 +90,30 @@ document.addEventListener('DOMContentLoaded', function() {
         const message = messageInput.value.trim();
         if (!message) return;
 
+        // Disable input and button while processing
+        messageInput.disabled = true;
+        submitButton.disabled = true;
+
         // Add user message to chat
         addMessage({ type: "user", text: message }, 'user');
         messageInput.value = '';
 
         try {
+            console.log("Sending request to /chat with:", { message, sessionId });
             const response = await fetch('/chat', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
                 },
-                body: JSON.stringify({ message: message }),
+                body: JSON.stringify({ 
+                    message: message,
+                    session_id: sessionId
+                }),
             });
+
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
+            }
 
             const data = await response.json();
             console.log("Raw response from server:", data);

@@ -25,6 +25,9 @@ from src.services.llm_service import LLMService
 from src.config import ResponseTypes
 from src.services.service_container import container
 
+# Import chat router
+from src.routes import chat
+
 app = FastAPI()
 
 # Add CORS middleware
@@ -108,4 +111,7 @@ async def clear_session(session_id: str) -> Dict:
     if session_id in chat_sessions:
         chat_sessions[session_id].reset()
         return {"status": "cleared"}
-    return {"status": "not_found"} 
+    return {"status": "not_found"}
+
+# Mount the chat router
+app.include_router(chat.router, prefix="/chat", tags=["chat"]) 
