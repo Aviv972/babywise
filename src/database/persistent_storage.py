@@ -21,27 +21,33 @@ class PersistentStorage:
                 logger.warning("MongoDB URI not found in environment variables")
                 return
 
-            # Configure MongoDB connection with TLS 1.2
+            # Configure MongoDB connection based on official documentation
             self.client = AsyncIOMotorClient(
                 mongodb_url,
                 serverSelectionTimeoutMS=5000,
                 connectTimeoutMS=5000,
                 socketTimeoutMS=5000,
-                maxPoolSize=1,
+                maxPoolSize=50,  # Increased from 1 for better performance
                 retryWrites=True,
                 tls=True,
-                tlsAllowInvalidCertificates=False,  # Enforce certificate validation
-                tlsCAFile=None,  # Use system CA certificates
-                ssl_cert_reqs='CERT_REQUIRED'  # Enforce SSL certificate verification
+                tlsAllowInvalidCertificates=False,
+                tlsAllowInvalidHostnames=False,  # Added for stricter security
             )
             
             # Test the connection
             self.db = self.client.get_database('babywise')
+            
             # Log connection info
             server_info = self.client.server_info()
-            if server_info and 'connectionStatus' in server_info:
-                logger.info("MongoDB connection initialized successfully with TLS")
-            logger.info("MongoDB connection initialized successfully")
+            if server_info:
+                logger.info("MongoDB connection initialized successfully")
+                
+                # Log security info if available
+                if 'security' in server_info:
+                    ssl_info = server_info['security'].get('SSLServerSubjectName')
+                    if ssl_info:
+                        logger.info(f"Connected with SSL to: {ssl_info}")
+                        
         except Exception as e:
             logger.error(f"Error initializing MongoDB: {str(e)}")
             self.client = None
