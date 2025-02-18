@@ -5,6 +5,8 @@ from fastapi.responses import JSONResponse
 from typing import Dict
 from src.services.service_container import container
 import logging
+import asyncio
+from datetime import datetime
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -37,10 +39,26 @@ async def chat(
     """
     try:
         logger.info("\n=== Starting Chat Request Processing ===")
+        start_time = datetime.utcnow()
         logger.info(f"Received message: {request.message}")
+        
+        # For simple greetings, return immediate response
+        greetings = {'hi', 'hello', 'hey', 'good morning', 'good afternoon', 'good evening'}
+        if request.message.lower().strip() in greetings:
+            response = {
+                "type": "answer",
+                "text": "Hi! I'm your friendly Babywise Assistant. How can I help you today?"
+            }
+            # Store the interaction asynchronously
+            asyncio.create_task(chat_session.process_query(request.message))
+            return JSONResponse(content=response)
         
         # Process the query with context
         response = await chat_session.process_query(request.message)
+        
+        end_time = datetime.utcnow()
+        processing_time = (end_time - start_time).total_seconds()
+        logger.info(f"Processing time: {processing_time} seconds")
         
         if not response:
             logger.warning("Empty response received from chat session")
