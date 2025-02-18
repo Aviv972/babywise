@@ -61,10 +61,13 @@ class QueryContext:
     def add_to_history(self, message: dict):
         """Add a message to conversation history"""
         self._data['conversation_history'].append(message)
+        # Keep only last 10 messages
+        if len(self._data['conversation_history']) > 10:
+            self._data['conversation_history'] = self._data['conversation_history'][-10:]
 
-    def get_recent_history(self, limit: int = 3) -> list:
-        """Get the most recent conversation history"""
-        return self._data['conversation_history'][-limit:]
+    def get_recent_history(self, limit: int = 5) -> list:
+        """Get recent conversation history"""
+        return self._data['conversation_history'][-limit:] if self._data['conversation_history'] else []
 
     def to_dict(self) -> dict:
         """Convert context to dictionary format"""
@@ -101,7 +104,7 @@ class QueryContext:
             }
         }
         
-        self.conversation_history.append(message_with_context)
+        self._data['conversation_history'].append(message_with_context)
         self._update_context_relevance(message['content'], relevance_score)
         print(f"Added message to history with context - Role: {message['role']}, Relevance: {relevance_score:.2f}")
 
@@ -307,33 +310,33 @@ class QueryContext:
                     base_score = 0.7
                 
                 # Update the score, keeping the higher value
-                self.context_relevance_scores[topic] = max(
+                self._data['context_relevance_scores'][topic] = max(
                     base_score + score,  # Combine base score with content relevance
-                    self.context_relevance_scores.get(topic, 0.0)
+                    self._data['context_relevance_scores'].get(topic, 0.0)
                 )
         
         # Special handling for important content types
         if any(term in content_lower for term in ['travel', 'airplane', 'transport']):
-            self.context_relevance_scores['travel'] = max(
+            self._data['context_relevance_scores']['travel'] = max(
                 0.7 + score,  # Higher base score for travel
-                self.context_relevance_scores.get('travel', 0.0)
+                self._data['context_relevance_scores'].get('travel', 0.0)
             )
             
         if any(term in content_lower for term in ['budget', 'cost', 'price', '$']):
-            self.context_relevance_scores['budget'] = max(
+            self._data['context_relevance_scores']['budget'] = max(
                 0.8 + score,  # Very high base score for budget
-                self.context_relevance_scores.get('budget', 0.0)
+                self._data['context_relevance_scores'].get('budget', 0.0)
             )
             
         if any(term in content_lower for term in ['month', 'year', 'age']):
-            self.context_relevance_scores['age'] = max(
+            self._data['context_relevance_scores']['age'] = max(
                 0.8 + score,  # Very high base score for age
-                self.context_relevance_scores.get('age', 0.0)
+                self._data['context_relevance_scores'].get('age', 0.0)
             )
             
         # Ensure scores don't exceed 1.0
-        for topic in self.context_relevance_scores:
-            self.context_relevance_scores[topic] = min(self.context_relevance_scores[topic], 1.0)
+        for topic in self._data['context_relevance_scores']:
+            self._data['context_relevance_scores'][topic] = min(self._data['context_relevance_scores'][topic], 1.0)
 
     def update_from_response(self, response: Dict) -> None:
         """Update context based on response with history tracking"""
@@ -359,9 +362,9 @@ class QueryContext:
         self.gathered_info[field] = value
         
         # Update relevance scores with a higher base score for clarifications
-        self.context_relevance_scores[field] = max(
+        self._data['context_relevance_scores'][field] = max(
             0.5 + relevance_score,  # Add base score to ensure minimum relevance
-            self.context_relevance_scores.get(field, 0.0)
+            self._data['context_relevance_scores'].get(field, 0.0)
         )
         
         # Add to history for tracking
@@ -481,7 +484,7 @@ class QueryContext:
         # Extract most relevant fields based on context scores
         relevant_fields = {
             field: value for field, value in self.gathered_info.items()
-            if self.context_relevance_scores.get(field, 0.0) > 0.3  # Relevance threshold
+            if self._data['context_relevance_scores'].get(field, 0.0) > 0.3  # Relevance threshold
         }
         
         return {
@@ -490,7 +493,7 @@ class QueryContext:
             ContextFields.GATHERED_INFO: relevant_fields,
             ContextFields.CONVERSATION_HISTORY: relevant_history,
             ContextFields.AGENT_TYPE: self.agent_type,
-            'context_relevance': self.context_relevance_scores
+            'context_relevance': self._data['context_relevance_scores']
         }
         
     def get_formatted_context(self) -> str:
@@ -532,12 +535,12 @@ Recent conversation history:
             'gathered_info': self.gathered_info,
             'conversation_history': self.get_recent_history(),
             'agent_type': self.agent_type,
-            'context_relevance': self.context_relevance_scores
+            'context_relevance': self._data['context_relevance_scores']
         }
 
     def update_context_relevance(self, field: str, value: str, score: float) -> None:
         """Update relevance score for a specific field"""
-        self.context_relevance_scores[field] = min(score, 1.0)
+        self._data['context_relevance_scores'][field] = min(score, 1.0)
         print(f"Updated relevance score for {field}: {score}")
 
     def get_missing_critical_fields(self) -> List[str]:
@@ -566,7 +569,7 @@ Recent conversation history:
 
     def get_field_relevance(self, field: str) -> float:
         """Get relevance score for a specific field"""
-        return self.context_relevance_scores.get(field, 0.0)
+        return self._data['context_relevance_scores'].get(field, 0.0)
 
     def cleanup_outdated_context(self, max_age_hours: int = 24) -> None:
         """Remove outdated context information"""
@@ -574,15 +577,15 @@ Recent conversation history:
         max_age = timedelta(hours=max_age_hours)
         
         # Clean up conversation history
-        self.conversation_history = [
-            msg for msg in self.conversation_history
+        self._data['conversation_history'] = [
+            msg for msg in self._data['conversation_history']
             if (current_time - datetime.fromisoformat(msg['timestamp'])).total_seconds() / 3600 < max_age_hours
         ]
         
         # Clean up relevance scores
-        for field in list(self.context_relevance_scores.keys()):
+        for field in list(self._data['context_relevance_scores'].keys()):
             if self.get_field_relevance(field) < 0.3:  # Remove low relevance fields
-                del self.context_relevance_scores[field]
+                del self._data['context_relevance_scores'][field]
                 if field in self.gathered_info:
                     del self.gathered_info[field]
 
@@ -601,4 +604,26 @@ Recent Conversation:
 
 Missing Critical Fields:
 {', '.join(self.get_missing_critical_fields()) or 'None'}
-""" 
+"""
+
+    def get_state(self) -> dict:
+        """Get the current state of the context"""
+        return {
+            'original_query': self.original_query,
+            'gathered_info': self.gathered_info,
+            'conversation_history': self.conversation_history[-5:] if self.conversation_history else [],  # Last 5 messages
+            'agent_type': self.agent_type,
+            'last_question': self._last_field
+        }
+
+    def clear(self) -> None:
+        """Clear all context data"""
+        self.original_query = None
+        self.gathered_info = {}
+        self.conversation_history = []
+        self.agent_type = None
+        self._last_field = None
+        self._data['context_relevance_scores'] = {}
+        self.question_count = 0
+        self.query_type = None
+        self.field_timestamps = {} 

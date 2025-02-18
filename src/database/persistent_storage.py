@@ -12,9 +12,20 @@ class PersistentStorage:
     def __init__(self):
         self.client = None
         self.db = None
-        # Create event loop for initialization
-        loop = asyncio.get_event_loop()
-        loop.run_until_complete(self._initialize_db())
+        try:
+            # Get or create event loop
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+            
+            # Initialize DB connection
+            loop.run_until_complete(self._initialize_db())
+        except Exception as e:
+            logger.error(f"Failed to initialize MongoDB connection: {str(e)}")
+            self.client = None
+            self.db = None
 
     async def _initialize_db(self):
         """Initialize MongoDB connection"""

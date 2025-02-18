@@ -259,10 +259,23 @@ class ChatSession:
                 self.current_agent = self.agent_factory.get_agent(message)
                 logger.info(f"Selected agent: {self.current_agent.__class__.__name__}")
                 
+                # Get context state safely
+                try:
+                    context_state = self.context.get_state()
+                except AttributeError:
+                    logger.warning("Context get_state not available, initializing empty context")
+                    context_state = {
+                        'original_query': message,
+                        'gathered_info': {},
+                        'conversation_history': [],
+                        'agent_type': None,
+                        'last_question': None
+                    }
+                
                 # Process with context
                 response = await self.current_agent.process_query(
                     message,
-                    context=self.context.get_state()
+                    context=context_state
                 )
                 
                 if not response or 'text' not in response:
