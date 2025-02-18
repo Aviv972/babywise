@@ -15,11 +15,16 @@ from datetime import datetime
 import json
 import re
 import logging
+import uuid
+
+logger = logging.getLogger(__name__)
 
 class ChatSession:
     def __init__(self, agent_factory: AgentFactory):
         self.agent_factory = agent_factory
         self.db = DatabaseManager()
+        self.session_id = str(uuid.uuid4())
+        self._initialize_session()
         self.context = QueryContext()
         self.conversation_history = []
         self.current_agent = None
@@ -27,6 +32,16 @@ class ChatSession:
         self.conversation_id = self.db.create_conversation()
         self.logger = logging.getLogger(__name__)
         self.logger.info(f"Created new chat session with ID: {self.conversation_id}")
+
+    def _initialize_session(self):
+        """Initialize a new chat session in the database"""
+        conn = self.db.get_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            "INSERT INTO chat_sessions (session_id) VALUES (?)",
+            (self.session_id,)
+        )
+        conn.commit()
 
     def _process_answer(self, query: str, response: Dict) -> None:
         """Process and store the answer in the context"""
@@ -187,70 +202,34 @@ class ChatSession:
         # Add other agent type determinations here
         return "general"
 
-    async def process_query(self, query: str) -> Dict:
-        """Process a query with enhanced context management"""
+    async def process_query(self, message: str) -> Dict[str, Any]:
+        """Process a user query and return the response"""
         try:
-            self.logger.info("\n=== Processing Query in Chat Session ===")
-            self.logger.info(f"Query: {query}")
-
-            # Initialize context dictionary if not exists
-            if not hasattr(self, 'context'):
-                self.logger.info("Initializing new context")
-                self.context = {
-                    'original_query': query,
-                    'gathered_info': {},
-                    'conversation_history': [],
-                    'agent_type': None,
-                    'product_category': None
-                }
-            
-            # Store original query if this is the first message
-            if not self.context.get('original_query'):
-                self.logger.info("Setting original query")
-                self.context['original_query'] = query
-
-            # Get appropriate agent
-            self.logger.info("Getting appropriate agent for query...")
-            agent = await self.agent_factory.get_agent_for_query(query, self.context.get('agent_type'))
-            self.logger.info(f"Selected agent: {agent.__class__.__name__}")
-
-            # Process query with full context
-            self.logger.info("Processing query with agent...")
-            response = await agent.process_query(
-                query=query,
-                context=self.context,
-                chat_history=self.context.get('conversation_history', [])
+            # Store user message
+            conn = self.db.get_connection()
+            cursor = conn.cursor()
+            cursor.execute(
+                "INSERT INTO messages (session_id, message, role) VALUES (?, ?, ?)",
+                (self.session_id, message, 'user')
             )
-
-            # Update conversation history
-            self.logger.info("Updating conversation history...")
-            self.context['conversation_history'].append({
-                'role': 'user',
-                'content': query,
-                'timestamp': datetime.now().isoformat()
-            })
-
-            if response and response.get('text'):
-                self.context['conversation_history'].append({
-                    'role': 'assistant',
-                    'content': response['text'],
-                    'timestamp': datetime.now().isoformat(),
-                    'product_category': self.context.get('product_category')
-                })
-                self.logger.info("Conversation history updated successfully")
-
-            self.logger.info(f"Query processing complete. Response type: {response.get('type', 'unknown')}")
+            conn.commit()
+            
+            # Get appropriate agent and process query
+            agent = self.agent_factory.get_agent(message)
+            response = await agent.process_query(message)
+            
+            # Store assistant response
+            cursor.execute(
+                "INSERT INTO messages (session_id, message, role) VALUES (?, ?, ?)",
+                (self.session_id, response.get('text', ''), 'assistant')
+            )
+            conn.commit()
+            
             return response
-
+            
         except Exception as e:
-            self.logger.error("=== Error in Chat Session ===")
-            self.logger.error(f"Error type: {type(e).__name__}")
-            self.logger.error(f"Error message: {str(e)}")
-            self.logger.error("Full traceback:", exc_info=True)
-            return {
-                'type': ResponseTypes.ERROR,
-                'text': "I apologize, but I encountered an error. Could you please rephrase your question?"
-            }
+            logger.error(f"Error processing query: {str(e)}", exc_info=True)
+            raise
 
     async def _evaluate_context_sufficiency(self, query: str, context: Dict) -> bool:
         """Determine if we have sufficient context to provide a meaningful response"""
@@ -525,9 +504,19 @@ class ChatSession:
         self.conversation_id = self.db.create_conversation()
         self.logger.info(f"Reset session: Created new conversation with ID: {self.conversation_id}")
 
-    def get_state(self) -> Dict:
-        """Get current session state"""
-        return self.context.to_dict()
+    def get_state(self) -> Dict[str, Any]:
+        """Get the current state of the chat session"""
+        conn = self.db.get_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT message, role FROM messages WHERE session_id = ? ORDER BY timestamp",
+            (self.session_id,)
+        )
+        messages = [{'message': msg, 'role': role} for msg, role in cursor.fetchall()]
+        return {
+            'session_id': self.session_id,
+            'messages': messages
+        }
 
     def store_answer(self, field: str, answer: str) -> None:
         """Store an answer for a specific field in both memory and database"""

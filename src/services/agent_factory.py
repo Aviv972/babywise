@@ -3,12 +3,34 @@ from src.constants import AgentTypes
 from src.agents.mental_health_agent import MentalHealthAgent
 from src.agents.general_agent import GeneralAgent
 from src.agents.baby_gear_agent import BabyGearAgent
+from src.services.llm_service import LLMService
+from src.agents.base_agent import BaseAgent
+import logging
+
+logger = logging.getLogger(__name__)
 
 class AgentFactory:
-    def __init__(self, llm_service):
+    def __init__(self, llm_service: LLMService):
         self.llm_service = llm_service
-        self.agents: Dict[str, object] = {}
+        self._initialize_agents()
         
+    def _initialize_agents(self):
+        """Initialize all available agents"""
+        self.agents = {
+            'general': GeneralAgent(self.llm_service),
+            'baby_gear': BabyGearAgent(self.llm_service)
+        }
+        
+    def get_agent(self, message: str) -> BaseAgent:
+        """Get the appropriate agent based on the message content"""
+        # Simple keyword-based routing for now
+        if any(keyword in message.lower() for keyword in ['stroller', 'crib', 'car seat', 'bottle', 'diaper']):
+            logger.info("Selected baby gear agent")
+            return self.agents['baby_gear']
+        
+        logger.info("Selected general agent")
+        return self.agents['general']
+
     async def get_agent_for_query(self, query: str, agent_type: Optional[str] = None) -> object:
         """Get or create appropriate agent based on query and/or specified type"""
         # First determine agent type from query if not specified

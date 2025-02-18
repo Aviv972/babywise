@@ -46,52 +46,42 @@ class KnowledgeBase(Base):
 
 class DatabaseManager:
     def __init__(self):
-        self.conn = sqlite3.connect('chat_history.db')
+        # Use in-memory database for Vercel environment
+        is_vercel = os.environ.get('VERCEL', False)
+        self.db_url = 'file::memory:?cache=shared' if is_vercel else 'chatbot.db'
+        self.conn: Optional[sqlite3.Connection] = None
         self.create_tables()
 
+    def get_connection(self) -> sqlite3.Connection:
+        if not self.conn:
+            self.conn = sqlite3.connect(self.db_url, uri=True)
+        return self.conn
+        
     def create_tables(self):
-        """Create necessary database tables if they don't exist"""
-        # Drop existing tables to recreate with new schema
-        self.conn.execute("DROP TABLE IF EXISTS messages")
-        self.conn.execute("DROP TABLE IF EXISTS context_info")
-        self.conn.execute("DROP TABLE IF EXISTS conversations")
+        conn = self.get_connection()
+        cursor = conn.cursor()
         
-        self.conn.execute("""
-            CREATE TABLE conversations (
-                id INTEGER PRIMARY KEY,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                agent_type TEXT,
-                original_query TEXT,
-                metadata TEXT,
-                user_id TEXT,
-                status TEXT DEFAULT 'active'
-            )
-        """)
+        # Create tables
+        cursor.execute('''
+        CREATE TABLE IF NOT EXISTS chat_sessions (
+            session_id TEXT PRIMARY KEY,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+        ''')
         
-        self.conn.execute("""
-            CREATE TABLE messages (
-                id INTEGER PRIMARY KEY,
-                conversation_id INTEGER,
-                content TEXT,
-                role TEXT,  -- 'user', 'assistant', or 'system'
-                type TEXT,  -- message type (e.g., 'follow_up_question', 'response')
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                metadata TEXT,  -- JSON string for additional data
-                FOREIGN KEY (conversation_id) REFERENCES conversations(id)
-            )
-        """)
+        cursor.execute('''
+        CREATE TABLE IF NOT EXISTS messages (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_id TEXT,
+            message TEXT,
+            role TEXT,
+            timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (session_id) REFERENCES chat_sessions(session_id)
+        )
+        ''')
         
-        self.conn.execute("""
-            CREATE TABLE context_info (
-                id INTEGER PRIMARY KEY,
-                conversation_id INTEGER,
-                field TEXT,
-                value TEXT,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (conversation_id) REFERENCES conversations(id)
-            )
-        """)
-        self.conn.commit()
+        conn.commit()
 
     def create_conversation(self, agent_type: str = None, original_query: str = None, metadata: dict = None) -> int:
         """Create a new conversation and return its ID"""
