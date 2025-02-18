@@ -215,16 +215,25 @@ class ChatSession:
             # Get appropriate agent and process query
             agent = self.agent_factory.get_agent(message)
             
-            # Process with context only, remove similar_responses
-            response = await agent.process_query(
+            # Process with context only
+            raw_response = await agent.process_query(
                 message,
                 context=context
             )
             
+            # Format response in WhatsApp style
+            response = {
+                'type': 'answer',
+                'text': raw_response.get('text', ''),
+                'timestamp': datetime.utcnow().isoformat(),
+                'role': 'assistant',
+                'style': 'whatsapp'
+            }
+            
             # Store assistant response
             await self.db.store_message(
                 self.session_id, 
-                response.get('text', ''), 
+                response['text'], 
                 'assistant'
             )
             

@@ -29,8 +29,8 @@ class PersistentStorage:
                 socketTimeoutMS=5000,
                 maxPoolSize=1,
                 retryWrites=True,
-                ssl=True,
-                ssl_cert_reqs='CERT_NONE'  # Disable certificate verification for now
+                tls=True,
+                tlsAllowInvalidCertificates=True  # For development only
             )
             
             # Test the connection with timeout
