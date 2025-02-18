@@ -42,18 +42,8 @@ async def chat(
         start_time = datetime.utcnow()
         logger.info(f"Received message: {request.message}")
         
-        # For simple greetings, return immediate response
-        greetings = {'hi', 'hello', 'hey', 'good morning', 'good afternoon', 'good evening'}
-        if request.message.lower().strip() in greetings:
-            response = {
-                "type": "answer",
-                "text": "Hi! I'm your friendly Babywise Assistant. How can I help you today?"
-            }
-            # Store the interaction asynchronously
-            asyncio.create_task(chat_session.process_query(request.message))
-            return JSONResponse(content=response)
-        
         # Process the query with context
+        # This ensures we maintain the core app logic for all messages
         response = await chat_session.process_query(request.message)
         
         end_time = datetime.utcnow()
