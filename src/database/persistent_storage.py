@@ -21,14 +21,16 @@ class PersistentStorage:
                 logger.warning("MongoDB URI not found in environment variables")
                 return
 
-            # Add connection timeout and server selection timeout
+            # Add SSL configuration and connection options
             self.client = AsyncIOMotorClient(
                 mongodb_url,
-                serverSelectionTimeoutMS=5000,  # 5 seconds timeout for server selection
-                connectTimeoutMS=5000,          # 5 seconds timeout for initial connection
-                socketTimeoutMS=5000,           # 5 seconds timeout for socket operations
-                maxPoolSize=1,                  # Limit connection pool for serverless
-                retryWrites=True                # Enable retrying write operations
+                serverSelectionTimeoutMS=5000,
+                connectTimeoutMS=5000,
+                socketTimeoutMS=5000,
+                maxPoolSize=1,
+                retryWrites=True,
+                ssl=True,
+                ssl_cert_reqs='CERT_NONE'  # Disable certificate verification for now
             )
             
             # Test the connection with timeout
@@ -73,11 +75,12 @@ class PersistentStorage:
             message['timestamp'] = datetime.utcnow()
             message['session_id'] = session_id
 
-            # Remove write_concern from insert_one
+            # Store message without waiting for response
             await self.db.messages.insert_one(message)
-            logger.info(f"Stored message for session {session_id}")
+            logger.debug(f"Stored message for session {session_id}")
         except Exception as e:
             logger.error(f"Error storing message: {str(e)}")
+            # Don't raise the exception, just log it
             return None
 
     async def get_conversation_history(self, session_id: str, limit: int = 10) -> List[Dict]:

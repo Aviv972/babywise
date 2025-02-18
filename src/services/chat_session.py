@@ -215,14 +215,10 @@ class ChatSession:
             # Get appropriate agent and process query
             agent = self.agent_factory.get_agent(message)
             
-            # Check knowledge base for similar queries
-            similar_responses = await self.db.search_knowledge_base(message)
-            
-            # Process with all available context
+            # Process with context only, remove similar_responses
             response = await agent.process_query(
                 message,
-                context=context,
-                similar_responses=similar_responses
+                context=context
             )
             
             # Store assistant response
