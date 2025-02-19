@@ -18,39 +18,14 @@ document.addEventListener('DOMContentLoaded', function() {
 
     // Add welcome message
     function addWelcomeMessage() {
-        const welcomeHtml = `
-<div class="welcome-message">
-    <h2>👋 Hi there! I'm your friendly Babywise Assistant, here to help make your parenting journey a little easier.</h2>
-
-    <div class="section">
-        <div class="section-title">😊 Parenting Guidance</div>
-        <ul>
-            <li>Sleep schedules and routines</li>
-            <li>Feeding advice and meal planning</li>
-            <li>Development milestones</li>
-            <li>Daily care and routines</li>
-            <li>Behavior and learning tips</li>
-        </ul>
-    </div>
-
-    <div class="section">
-        <div class="section-title">🛍️ Baby Gear Support</div>
-        <ul>
-            <li>Product recommendations when needed</li>
-            <li>Personalized suggestions for your needs</li>
-            <li>Help finding the right gear for your family</li>
-        </ul>
-    </div>
-
-    <div>How can I assist you today? Feel free to ask about any parenting topics or baby gear questions!</div>
-</div>`;
+        const welcomeText = `👋 Hi there! I'm your friendly Babywise Assistant, here to help make your parenting journey a little easier. I can help you with: 😊 Parenting Guidance - Sleep schedules and routines - Feeding advice and meal planning - Development milestones - Daily care and routines - Behavior and learning tips\n\n🛍️ Baby Gear Support - Product recommendations when needed - Personalized suggestions for your needs - Help finding the right gear for your family How can I assist you today? Feel free to ask about any parenting topics or baby gear questions!`;
 
         const messageDiv = document.createElement('div');
         messageDiv.className = 'message assistant';
         
         const contentDiv = document.createElement('div');
         contentDiv.className = 'message-content';
-        contentDiv.innerHTML = welcomeHtml;
+        contentDiv.textContent = welcomeText;
         
         messageDiv.appendChild(contentDiv);
         
