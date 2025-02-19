@@ -67,6 +67,16 @@ document.addEventListener('DOMContentLoaded', function() {
             messageDiv.textContent = "Unknown message format";
         }
         
+        // Add timestamp
+        const timestamp = document.createElement('div');
+        timestamp.className = 'message-timestamp';
+        timestamp.textContent = new Date().toLocaleTimeString('en-US', { 
+            hour: 'numeric', 
+            minute: '2-digit',
+            hour12: true 
+        });
+        messageDiv.appendChild(timestamp);
+        
         // Auto-detect direction
         if (isRTL(messageDiv.textContent)) {
             messageDiv.style.direction = 'rtl';
@@ -98,6 +108,11 @@ document.addEventListener('DOMContentLoaded', function() {
         addMessage({ type: "user", text: message }, 'user');
         messageInput.value = '';
 
+        // Show typing indicator
+        const typingIndicator = document.getElementById('typing-indicator');
+        typingIndicator.style.display = 'block';
+        chatMessages.scrollTop = chatMessages.scrollHeight;
+
         try {
             console.log("Sending request to /chat with:", { message, sessionId });
             const response = await fetch('/chat', {
@@ -110,6 +125,9 @@ document.addEventListener('DOMContentLoaded', function() {
                     session_id: sessionId
                 }),
             });
+
+            // Hide typing indicator
+            typingIndicator.style.display = 'none';
 
             if (!response.ok) {
                 throw new Error(`HTTP error! status: ${response.status}`);
@@ -133,6 +151,9 @@ document.addEventListener('DOMContentLoaded', function() {
             }
 
         } catch (error) {
+            // Hide typing indicator on error
+            typingIndicator.style.display = 'none';
+            
             console.error('Error:', error);
             addMessage({
                 type: "answer",
