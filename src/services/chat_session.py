@@ -213,7 +213,7 @@ class ChatSession:
             'type': 'error',
             'text': error_message,
             'timestamp': datetime.utcnow().isoformat(),
-            'role': 'assistant'
+            'role': MessageRoles.MODEL
         }
 
     def _create_message_object(self, content: str, role: str) -> Dict:
@@ -252,7 +252,7 @@ class ChatSession:
             # 5. Store assistant message
             assistant_message = self._create_message_object(
                 response.get('text', ''),
-                MessageRoles.ASSISTANT
+                MessageRoles.MODEL
             )
             await self.db.store_message(self.session_id, assistant_message)
 
