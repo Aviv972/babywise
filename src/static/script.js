@@ -72,11 +72,7 @@ document.addEventListener('DOMContentLoaded', function() {
             contentDiv.textContent = data;
         }
         else if (data && (data.type === 'answer' || data.type === 'question')) {
-            // Add main text
-            const textDiv = document.createElement('div');
-            textDiv.className = 'message-text';
-            textDiv.textContent = data.text;
-            contentDiv.appendChild(textDiv);
+            contentDiv.textContent = data.text;
             
             // Add product grid if available
             if (data.products && data.products.length > 0) {
@@ -122,7 +118,7 @@ document.addEventListener('DOMContentLoaded', function() {
             
             // Update spacing classes
             if (lastMessageGroup && lastMessageGroup.type !== type) {
-                messageDiv.style.marginTop = '12px';
+                messageDiv.style.marginTop = '8px';  // Updated to match WhatsApp spacing
             }
         } else {
             messageDiv.style.marginTop = '1px';
@@ -163,7 +159,7 @@ document.addEventListener('DOMContentLoaded', function() {
         
         // Toggle send button state
         submitButton.disabled = !this.value.trim();
-        submitButton.style.color = this.value.trim() ? 'var(--whatsapp-green)' : '#8696A0';
+        submitButton.style.color = this.value.trim() ? '#00a884' : '#8696a0';
     });
 
     // Handle form submission
@@ -256,4 +252,17 @@ document.addEventListener('DOMContentLoaded', function() {
     // Initial button state
     submitButton.disabled = true;
     submitButton.style.color = '#8696A0';
+
+    // Update typing indicator display
+    function showTypingIndicator() {
+        typingIndicator.style.display = 'flex';
+        chatMessages.scrollTo({
+            top: chatMessages.scrollHeight,
+            behavior: 'smooth'
+        });
+    }
+
+    function hideTypingIndicator() {
+        typingIndicator.style.display = 'none';
+    }
 }); 
