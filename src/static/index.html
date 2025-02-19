@@ -24,7 +24,7 @@
         }
 
         body {
-            font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
+            font-family: -apple-system, "Helvetica Neue", "Segoe UI", Roboto, system-ui, sans-serif;
             background-color: #f0f2f5;
             height: 100vh;
             margin: 0;
@@ -72,8 +72,8 @@
         }
 
         .chat-messages {
-            background-color: var(--chat-bg);
-            background-image: url("data:image/svg+xml,%3Csvg width='64' height='64' viewBox='0 0 64 64' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M8 16c4.418 0 8-3.582 8-8s-3.582-8-8-8-8 3.582-8 8 3.582 8 8 8zm0-2c3.314 0 6-2.686 6-6s-2.686-6-6-6-6 2.686-6 6 2.686 6 6 6zm33.414-6l5.95-5.95L45.95.636 40 6.586 34.05.636 32.636 2.05 38.586 8l-5.95 5.95 1.414 1.414L40 9.414l5.95 5.95 1.414-1.414L41.414 8zM40 48c4.418 0 8-3.582 8-8s-3.582-8-8-8-8 3.582-8 8 3.582 8 8 8zm0-2c3.314 0 6-2.686 6-6s-2.686-6-6-6-6 2.686-6 6 2.686 6 6 6zM9.414 40l5.95-5.95-1.414-1.414L8 38.586l-5.95-5.95L.636 34.05 6.586 40l-5.95 5.95 1.414 1.414L8 41.414l5.95 5.95 1.414-1.414L9.414 40z' fill='%239C92AC' fill-opacity='0.1' fill-rule='evenodd'/%3E%3C/svg%3E");
+            background-color: #E5DDD5;
+            background-image: url("data:image/svg+xml,%3Csvg width='100' height='100' viewBox='0 0 100 100' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M11 18c3.866 0 7-3.134 7-7s-3.134-7-7-7-7 3.134-7 7 3.134 7 7 7zm48 25c3.866 0 7-3.134 7-7s-3.134-7-7-7-7 3.134-7 7 3.134 7 7 7zm-43-7c1.657 0 3-1.343 3-3s-1.343-3-3-3-3 1.343-3 3 1.343 3 3 3zm63 31c1.657 0 3-1.343 3-3s-1.343-3-3-3-3 1.343-3 3 1.343 3 3 3zM34 90c1.657 0 3-1.343 3-3s-1.343-3-3-3-3 1.343-3 3 1.343 3 3 3zm56-76c1.657 0 3-1.343 3-3s-1.343-3-3-3-3 1.343-3 3 1.343 3 3 3zM12 86c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm28-65c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm23-11c2.76 0 5-2.24 5-5s-2.24-5-5-5-5 2.24-5 5 2.24 5 5 5zm-6 60c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm29 22c2.76 0 5-2.24 5-5s-2.24-5-5-5-5 2.24-5 5 2.24 5 5 5zM32 63c2.76 0 5-2.24 5-5s-2.24-5-5-5-5 2.24-5 5 2.24 5 5 5zm57-13c2.76 0 5-2.24 5-5s-2.24-5-5-5-5 2.24-5 5 2.24 5 5 5zm-9-21c1.105 0 2-.895 2-2s-.895-2-2-2-2 .895-2 2 .895 2 2 2zM60 91c1.105 0 2-.895 2-2s-.895-2-2-2-2 .895-2 2 .895 2 2 2zM35 41c1.105 0 2-.895 2-2s-.895-2-2-2-2 .895-2 2 .895 2 2 2zM12 60c1.105 0 2-.895 2-2s-.895-2-2-2-2 .895-2 2 .895 2 2 2z' fill='%23999' fill-opacity='0.05' fill-rule='evenodd'/%3E%3C/svg%3E");
             padding: 20px;
             height: calc(100% - var(--header-height) - var(--footer-height));
             margin-top: var(--header-height);
@@ -84,28 +84,36 @@
 
         .message {
             max-width: 75%;
-            margin-bottom: 4px;
-            padding: 8px 12px;
-            border-radius: 16px;
+            margin-bottom: 2px;
+            padding: 6px 9px 8px 9px;
+            border-radius: 7.5px;
             position: relative;
             word-wrap: break-word;
-            font-size: 14.2px;
-            line-height: 19px;
+            font-size: 16px;
+            line-height: 20px;
             color: #000000;
-            letter-spacing: -0.1px;
+            letter-spacing: -0.2px;
         }
 
         .message-content {
             white-space: pre-wrap;
-            padding-right: 40px;
-            padding-bottom: 16px;
+            padding-right: 52px;
+            padding-bottom: 4px;
         }
 
         .user {
             background-color: #DCF8C6;
             align-self: flex-end;
-            border-top-right-radius: 4px;
-            margin-bottom: 10px;
+            border-top-right-radius: 0;
+            margin-bottom: 4px;
+        }
+
+        .user + .user {
+            margin-top: 2px;
+        }
+
+        .assistant + .assistant {
+            margin-top: 2px;
         }
 
         .user::before {
@@ -124,8 +132,8 @@
         .assistant {
             background-color: #FFFFFF;
             align-self: flex-start;
-            border-top-left-radius: 4px;
-            margin-bottom: 10px;
+            border-top-left-radius: 0;
+            margin-bottom: 4px;
         }
 
         .assistant::before {
@@ -143,23 +151,24 @@
 
         .message-timestamp {
             position: absolute;
-            bottom: 8px;
-            right: 12px;
-            font-size: 11px;
+            bottom: 4px;
+            right: 8px;
+            font-size: 12px;
             color: #999999;
             line-height: 15px;
             height: 15px;
+            font-family: -apple-system, "Helvetica Neue", sans-serif;
         }
 
         .typing-indicator {
             background-color: #FFFFFF;
             padding: 8px 12px;
-            border-radius: 16px;
-            border-top-left-radius: 4px;
-            margin-bottom: 10px;
+            border-radius: 7.5px;
+            border-top-left-radius: 0;
+            margin-bottom: 4px;
             align-self: flex-start;
             display: none;
-            max-width: 40%;
+            max-width: 70px;
             position: relative;
         }
 
@@ -178,13 +187,13 @@
 
         .typing-indicator span {
             display: inline-block;
-            width: 6px;
-            height: 6px;
-            background-color: #999999;
+            width: 8px;
+            height: 8px;
+            background-color: #B6B9BB;
             border-radius: 50%;
-            margin-right: 4px;
-            opacity: 0.4;
+            margin-right: 2px;
             animation: typing 1.4s infinite;
+            opacity: 0.5;
         }
 
         .typing-indicator span:nth-child(2) {
@@ -197,20 +206,21 @@
         }
 
         @keyframes typing {
-            0%, 100% { transform: translateY(0); opacity: 0.4; }
+            0%, 100% { transform: translateY(0); opacity: 0.5; }
             50% { transform: translateY(-4px); opacity: 1; }
         }
 
         /* System message specific styling */
         .system {
-            background-color: rgba(255, 255, 255, 0.9);
+            background-color: rgba(255, 255, 255, 0.95);
             align-self: center;
-            border-radius: 16px;
+            border-radius: 7.5px;
             padding: 8px 12px;
-            font-size: 14px;
+            font-size: 14.5px;
             color: #000000;
-            margin: 16px 0;
+            margin: 12px 0;
             max-width: 85%;
+            line-height: 20px;
         }
 
         .chat-input {
@@ -292,6 +302,12 @@
             .chat-header h1 {
                 font-size: 1.1rem;
             }
+        }
+
+        /* Message groups spacing */
+        .user + .assistant,
+        .assistant + .user {
+            margin-top: 12px;
         }
     </style>
 </head>
