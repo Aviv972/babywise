@@ -179,14 +179,12 @@ document.addEventListener('DOMContentLoaded', function() {
         addMessage({ type: "user", text: message }, 'user');
         messageInput.value = '';
 
-        // Show typing indicator with delay
-        setTimeout(() => {
-            typingIndicator.style.display = 'block';
-            chatMessages.scrollTo({
-                top: chatMessages.scrollHeight,
-                behavior: 'smooth'
-            });
-        }, 200);
+        // Show typing indicator immediately after user message
+        typingIndicator.style.display = 'flex';
+        chatMessages.scrollTo({
+            top: chatMessages.scrollHeight,
+            behavior: 'smooth'
+        });
 
         try {
             console.log("Sending request to /chat with:", { message, sessionId });
@@ -201,10 +199,8 @@ document.addEventListener('DOMContentLoaded', function() {
                 }),
             });
 
-            // Hide typing indicator with delay
-            setTimeout(() => {
-                typingIndicator.style.display = 'none';
-            }, 500);
+            // Hide typing indicator before showing response
+            typingIndicator.style.display = 'none';
 
             if (!response.ok) {
                 throw new Error(`HTTP error! status: ${response.status}`);
@@ -255,16 +251,6 @@ document.addEventListener('DOMContentLoaded', function() {
     submitButton.disabled = true;
     submitButton.style.color = '#8696A0';
 
-    // Update typing indicator display
-    function showTypingIndicator() {
-        typingIndicator.style.display = 'flex';
-        chatMessages.scrollTo({
-            top: chatMessages.scrollHeight,
-            behavior: 'smooth'
-        });
-    }
-
-    function hideTypingIndicator() {
-        typingIndicator.style.display = 'none';
-    }
+    // Hide typing indicator initially
+    typingIndicator.style.display = 'none';
 }); 
