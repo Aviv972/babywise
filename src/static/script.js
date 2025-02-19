@@ -120,7 +120,7 @@ document.addEventListener('DOMContentLoaded', function() {
             
             // Update spacing classes
             if (lastMessageGroup && lastMessageGroup.type !== type) {
-                messageDiv.style.marginTop = '8px';  // Updated to match WhatsApp spacing
+                messageDiv.style.marginTop = '8px';
             }
         } else {
             messageDiv.style.marginTop = '1px';
