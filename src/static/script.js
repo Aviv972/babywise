@@ -36,8 +36,13 @@ document.addEventListener('DOMContentLoaded', function() {
         timestamp.textContent = formatTimestamp(new Date());
         messageDiv.appendChild(timestamp);
         
-        chatMessages.appendChild(messageDiv);
-        chatMessages.scrollTop = chatMessages.scrollHeight;
+        // Insert welcome message at the beginning
+        chatMessages.insertBefore(messageDiv, chatMessages.firstChild);
+        
+        // Move typing indicator to be after the welcome message
+        if (typingIndicator) {
+            chatMessages.appendChild(typingIndicator);
+        }
     }
 
     function formatTimestamp(date) {
@@ -138,11 +143,12 @@ document.addEventListener('DOMContentLoaded', function() {
             messageDiv.style.textAlign = 'right';
         }
         
-        // Insert message in correct order
-        if (typingIndicator && type === 'user') {
-            chatMessages.insertBefore(messageDiv, typingIndicator);
-        } else {
-            chatMessages.appendChild(messageDiv);
+        // Always append new messages at the end
+        chatMessages.appendChild(messageDiv);
+        
+        // Move typing indicator to be last
+        if (typingIndicator) {
+            chatMessages.appendChild(typingIndicator);
         }
         
         // Smooth scroll to bottom
