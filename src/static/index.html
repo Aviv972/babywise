@@ -83,65 +83,134 @@
         }
 
         .message {
-            max-width: 85%;
-            margin-bottom: 12px;
-            padding: 6px 7px 8px 9px;
-            border-radius: 7.5px;
+            max-width: 75%;
+            margin-bottom: 4px;
+            padding: 8px 12px;
+            border-radius: 16px;
             position: relative;
             word-wrap: break-word;
             font-size: 14.2px;
             line-height: 19px;
-            color: #111b21;
+            color: #000000;
             letter-spacing: -0.1px;
         }
 
         .message-content {
             white-space: pre-wrap;
-            margin-right: 8px;
-            padding-bottom: 5px;
-        }
-
-        .message::before {
-            content: '';
-            position: absolute;
-            top: 0;
-            width: 12px;
-            height: 12px;
+            padding-right: 40px;
+            padding-bottom: 16px;
         }
 
         .user {
-            background-color: var(--user-msg-bg);
+            background-color: #DCF8C6;
             align-self: flex-end;
-            border-top-right-radius: 0;
+            border-top-right-radius: 4px;
+            margin-bottom: 10px;
         }
 
         .user::before {
-            right: -12px;
-            border-bottom-left-radius: 16px;
-            border-top: 12px solid var(--user-msg-bg);
-            border-right: 12px solid transparent;
+            content: '';
+            position: absolute;
+            top: 0;
+            right: -8px;
+            width: 8px;
+            height: 8px;
+            background: #DCF8C6;
+            clip-path: polygon(0 0, 100% 100%, 0 100%);
+            transform: rotate(-45deg);
+            border-radius: 0 0 0 4px;
         }
 
         .assistant {
-            background-color: var(--assistant-msg-bg);
+            background-color: #FFFFFF;
             align-self: flex-start;
-            border-top-left-radius: 0;
+            border-top-left-radius: 4px;
+            margin-bottom: 10px;
         }
 
         .assistant::before {
-            left: -12px;
-            border-bottom-right-radius: 16px;
-            border-top: 12px solid var(--assistant-msg-bg);
-            border-left: 12px solid transparent;
+            content: '';
+            position: absolute;
+            top: 0;
+            left: -8px;
+            width: 8px;
+            height: 8px;
+            background: #FFFFFF;
+            clip-path: polygon(0 100%, 100% 0, 100% 100%);
+            transform: rotate(45deg);
+            border-radius: 0 0 4px 0;
         }
 
+        .message-timestamp {
+            position: absolute;
+            bottom: 8px;
+            right: 12px;
+            font-size: 11px;
+            color: #999999;
+            line-height: 15px;
+            height: 15px;
+        }
+
+        .typing-indicator {
+            background-color: #FFFFFF;
+            padding: 8px 12px;
+            border-radius: 16px;
+            border-top-left-radius: 4px;
+            margin-bottom: 10px;
+            align-self: flex-start;
+            display: none;
+            max-width: 40%;
+            position: relative;
+        }
+
+        .typing-indicator::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: -8px;
+            width: 8px;
+            height: 8px;
+            background: #FFFFFF;
+            clip-path: polygon(0 100%, 100% 0, 100% 100%);
+            transform: rotate(45deg);
+            border-radius: 0 0 4px 0;
+        }
+
+        .typing-indicator span {
+            display: inline-block;
+            width: 6px;
+            height: 6px;
+            background-color: #999999;
+            border-radius: 50%;
+            margin-right: 4px;
+            opacity: 0.4;
+            animation: typing 1.4s infinite;
+        }
+
+        .typing-indicator span:nth-child(2) {
+            animation-delay: 0.2s;
+        }
+
+        .typing-indicator span:nth-child(3) {
+            animation-delay: 0.4s;
+            margin-right: 0;
+        }
+
+        @keyframes typing {
+            0%, 100% { transform: translateY(0); opacity: 0.4; }
+            50% { transform: translateY(-4px); opacity: 1; }
+        }
+
+        /* System message specific styling */
         .system {
-            background-color: rgba(255, 255, 255, 0.8);
+            background-color: rgba(255, 255, 255, 0.9);
             align-self: center;
             border-radius: 16px;
-            padding: 6px 12px;
-            font-size: 0.85rem;
-            color: #666;
+            padding: 8px 12px;
+            font-size: 14px;
+            color: #000000;
+            margin: 16px 0;
+            max-width: 85%;
         }
 
         .chat-input {
@@ -197,46 +266,6 @@
             background-color: #075E54;
         }
 
-        .message-timestamp {
-            position: absolute;
-            bottom: 4px;
-            right: 7px;
-            font-size: 11px;
-            color: #667781;
-            line-height: 15px;
-            margin-left: 4px;
-            height: 15px;
-        }
-
-        .typing-indicator {
-            background-color: var(--assistant-msg-bg);
-            padding: 8px 12px;
-            border-radius: 7.5px;
-            margin-bottom: 12px;
-            align-self: flex-start;
-            display: none;
-            min-width: 45px;
-            border-top-left-radius: 0;
-            position: relative;
-        }
-
-        .typing-indicator span {
-            display: inline-block;
-            width: 6px;
-            height: 6px;
-            background-color: #667781;
-            border-radius: 50%;
-            margin-right: 4px;
-            opacity: 0.4;
-            animation: typing 1s infinite;
-        }
-
-        @keyframes typing {
-            0%, 100% { transform: translateY(0); opacity: 0.8; }
-            0%, 100% { transform: translateY(0); }
-            50% { transform: translateY(-5px); }
-        }
-
         .message-time {
             font-size: 0.7rem;
             color: #999;
@@ -253,8 +282,11 @@
             }
 
             .message {
-                max-width: 90%;
-                font-size: 0.9rem;
+                max-width: 85%;
+            }
+
+            .typing-indicator {
+                max-width: 50%;
             }
 
             .chat-header h1 {
