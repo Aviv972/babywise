@@ -18,7 +18,9 @@ document.addEventListener('DOMContentLoaded', function() {
 
     // Add welcome message
     function addWelcomeMessage() {
-        const welcomeText = `👋 Hi there! I'm your friendly Babywise Assistant, here to help make your parenting journey a little easier. I can help you with: 😊 Parenting Guidance - Sleep schedules and routines - Feeding advice and meal planning - Development milestones - Daily care and routines - Behavior and learning tips\n\n🛍️ Baby Gear Support - Product recommendations when needed - Personalized suggestions for your needs - Help finding the right gear for your family How can I assist you today? Feel free to ask about any parenting topics or baby gear questions!`;
+        const welcomeText = `👋 Hi there! I'm your friendly Babywise Assistant, here to help make your parenting journey a little easier. I can help you with: 😊 Parenting Guidance - Sleep schedules and routines - Feeding advice and meal planning - Development milestones - Daily care and routines - Behavior and learning tips
+
+🛍️ Baby Gear Support - Product recommendations when needed - Personalized suggestions for your needs - Help finding the right gear for your family How can I assist you today? Feel free to ask about any parenting topics or baby gear questions!`;
 
         const messageDiv = document.createElement('div');
         messageDiv.className = 'message assistant';
