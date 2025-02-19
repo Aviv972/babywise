@@ -20,19 +20,19 @@ document.addEventListener('DOMContentLoaded', function() {
         const messageDiv = document.createElement('div');
         messageDiv.className = `message ${type}`;
         
+        // Create message content container
+        const contentDiv = document.createElement('div');
+        contentDiv.className = 'message-content';
+        
         if (typeof data === 'string') {
-            messageDiv.textContent = data;
+            contentDiv.textContent = data;
         }
         else if (data && (data.type === 'answer' || data.type === 'question')) {
-            // Create structured message
-            const content = document.createElement('div');
-            content.className = 'message-content';
-            
             // Add main text
             const textDiv = document.createElement('div');
             textDiv.className = 'message-text';
             textDiv.textContent = data.text;
-            content.appendChild(textDiv);
+            contentDiv.appendChild(textDiv);
             
             // Add product grid if available
             if (data.products && data.products.length > 0) {
@@ -53,19 +53,19 @@ document.addEventListener('DOMContentLoaded', function() {
                 });
                 
                 if (productsDiv.children.length > 0) {
-                    content.appendChild(productsDiv);
+                    contentDiv.appendChild(productsDiv);
                 }
             }
-            
-            messageDiv.appendChild(content);
         }
         else if (data && data.text) {
-            messageDiv.textContent = data.text;
+            contentDiv.textContent = data.text;
         }
         else {
             console.error("Unknown message format:", data);
-            messageDiv.textContent = "Unknown message format";
+            contentDiv.textContent = "Unknown message format";
         }
+        
+        messageDiv.appendChild(contentDiv);
         
         // Add timestamp
         const timestamp = document.createElement('div');
@@ -83,7 +83,13 @@ document.addEventListener('DOMContentLoaded', function() {
             messageDiv.style.textAlign = 'right';
         }
         
-        chatMessages.appendChild(messageDiv);
+        // Insert message in correct order (before typing indicator if it exists)
+        const typingIndicator = document.getElementById('typing-indicator');
+        if (typingIndicator && type === 'user') {
+            chatMessages.insertBefore(messageDiv, typingIndicator);
+        } else {
+            chatMessages.appendChild(messageDiv);
+        }
         chatMessages.scrollTop = chatMessages.scrollHeight;
     }
 
