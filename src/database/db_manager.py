@@ -4,7 +4,6 @@ from sqlalchemy.orm import sessionmaker, relationship, scoped_session
 from datetime import datetime
 import os
 from typing import Optional, List, Dict, Any
-import sqlite3
 import json
 from .persistent_storage import PersistentStorage
 import logging
@@ -173,6 +172,12 @@ class DatabaseManager:
         """Cleanup on object destruction"""
         pass
 
+    def update_conversation_metadata(self, conversation_id: str, metadata: dict):
+        """Update conversation metadata"""
+        if conversation_id in self._conversations:
+            self._conversations[conversation_id]['metadata'] = metadata
+            self._conversations[conversation_id]['last_updated'] = datetime.utcnow().isoformat()
+
     def create_conversation(self, agent_type: str = None, original_query: str = None, metadata: dict = None) -> int:
         """Create a new conversation and return its ID"""
         cursor = self.conn.execute(
@@ -236,16 +241,6 @@ class DatabaseManager:
             messages.append(message)
         
         return messages
-
-    def update_conversation_metadata(self, conversation_id: int, metadata: dict):
-        """Update conversation metadata"""
-        self.conn.execute(
-            """UPDATE conversations 
-               SET metadata = ?
-               WHERE id = ?""",
-            (json.dumps(metadata), conversation_id)
-        )
-        self.conn.commit()
 
     def search_knowledge_base_by_category(self, query: str, category: str, threshold: float = 0.7) -> Optional[str]:
         """Search for existing relevant responses within a specific category"""

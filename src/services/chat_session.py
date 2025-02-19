@@ -37,19 +37,17 @@ class ChatSession:
     async def initialize(self):
         """Initialize the chat session asynchronously"""
         await self.db.initialize()
-        await self._initialize_session()
         # Initialize a new conversation in the database
         self.conversation_id = self.db.create_conversation()
 
-    async def _initialize_session(self):
-        """Initialize a new chat session in the database"""
-        conn = self.db.get_connection()
-        cursor = conn.cursor()
-        cursor.execute(
-            "INSERT INTO chat_sessions (session_id) VALUES (?)",
-            (self.session_id,)
-        )
-        conn.commit()
+    @asynccontextmanager
+    async def _get_db_transaction(self):
+        """Context manager for database operations"""
+        try:
+            yield
+        except Exception as e:
+            logger.error(f"Database operation failed: {str(e)}")
+            raise DatabaseError(f"Database operation failed: {str(e)}")
 
     def _process_answer(self, query: str, response: Dict) -> None:
         """Process and store the answer in the context"""
@@ -239,16 +237,6 @@ class ChatSession:
                 'agent_type': self.current_agent.__class__.__name__ if self.current_agent else None
             }
         }
-
-    @asynccontextmanager
-    async def _get_db_transaction(self):
-        """Context manager for database transactions"""
-        try:
-            # Start transaction
-            yield
-        except Exception as e:
-            logger.error(f"Database transaction failed: {str(e)}")
-            raise DatabaseError("Failed to store conversation data")
 
     async def process_query(self, message: str) -> Dict[str, Any]:
         """Process a user query and return the response"""
