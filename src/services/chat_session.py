@@ -17,7 +17,6 @@ import re
 import logging
 import uuid
 import asyncio
-from contextlib import asynccontextmanager
 from src.exceptions import ModelProcessingError, DatabaseError, ValidationError
 
 logger = logging.getLogger(__name__)
@@ -39,15 +38,6 @@ class ChatSession:
         await self.db.initialize()
         # Initialize a new conversation in the database
         self.conversation_id = self.db.create_conversation()
-
-    @asynccontextmanager
-    async def _get_db_transaction(self):
-        """Context manager for database operations"""
-        try:
-            yield
-        except Exception as e:
-            logger.error(f"Database operation failed: {str(e)}")
-            raise DatabaseError(f"Database operation failed: {str(e)}")
 
     def _process_answer(self, query: str, response: Dict) -> None:
         """Process and store the answer in the context"""
@@ -240,95 +230,40 @@ class ChatSession:
 
     async def process_query(self, message: str) -> Dict[str, Any]:
         """Process a user query and return the response"""
-        response = None
-        formatted_response = None
         try:
             # 1. Validate message
             if not self._validate_message(message):
                 return self._create_error_response("Please provide a valid message")
 
-            # 2. Get appropriate agent and process query
-            try:
-                self.current_agent = self.agent_factory.get_agent(message)
-                logger.info(f"Selected agent: {self.current_agent.__class__.__name__}")
-                
-                # Get context state safely
-                try:
-                    context_state = self.context.get_state()
-                except AttributeError:
-                    logger.warning("Context get_state not available, initializing empty context")
-                    context_state = {
-                        'original_query': message,
-                        'gathered_info': {},
-                        'conversation_history': [],
-                        'agent_type': None,
-                        'last_question': None
-                    }
-                
-                # Process with context - THIS IS THE MAIN PROCESSING STEP
-                response = await self.current_agent.process_query(
-                    message,
-                    context=context_state
-                )
-                
-                if not response or 'text' not in response:
-                    raise ModelProcessingError("Invalid response from model")
+            # 2. Store user message
+            user_message = self._create_message_object(message, MessageRoles.USER)
+            await self.db.store_message(self.session_id, user_message)
 
-                # 3. Only if processing succeeds, store everything in a single transaction
-                try:
-                    async with self._get_db_transaction():
-                        # Prepare all data for storage
-                        user_message = self._create_message_object(message, 'user')
-                        assistant_message = self._create_message_object(response['text'], 'assistant')
-                        context_data = self._extract_and_store_context(message)
-                        
-                        # Store everything in a single transaction
-                        await asyncio.gather(
-                            self.db.store_message(self.session_id, user_message),
-                            self.db.store_message(self.session_id, assistant_message),
-                            self.db.store_context(self.session_id, context_data) if context_data else asyncio.sleep(0)
-                        )
-                        logger.info("Successfully stored all conversation data in transaction")
-                        
-                except Exception as e:
-                    logger.error(f"Database storage error: {str(e)}")
-                    # Continue with response even if storage fails
-                    logger.warning("Continuing with response despite storage failure")
-                
-                # 4. Format and return response
-                formatted_response = {
-                    'type': response.get('type', 'answer'),
-                    'text': response['text'],
-                    'timestamp': datetime.utcnow().isoformat(),
-                    'role': 'assistant',
-                    'metadata': {
-                        'agent_type': self.current_agent.__class__.__name__,
-                        'confidence': response.get('confidence', 1.0)
-                    }
-                }
+            # 3. Get appropriate agent and process query
+            if not self.current_agent:
+                agent_type = self._determine_agent_type(message)
+                self.current_agent = self.agent_factory.get_agent(agent_type)
 
-                return formatted_response
-                
-            except ModelProcessingError as e:
-                logger.error(f"Model processing error: {str(e)}")
-                return self._create_error_response(
-                    "I'm having trouble processing your request. Please try again."
-                )
-            
-        except DatabaseError as e:
-            logger.error(f"Database error: {str(e)}")
-            # If we have a response, return it despite DB error
-            if response and formatted_response:
-                return formatted_response
-            return self._create_error_response(
-                "I processed your request but couldn't save the conversation."
+            # 4. Process with agent
+            response = await self.current_agent.process_query(message, self.context)
+            if not self._validate_response(response):
+                return self._create_error_response("Invalid response format from agent")
+
+            # 5. Store assistant message
+            assistant_message = self._create_message_object(
+                response.get('text', ''),
+                MessageRoles.ASSISTANT
             )
-            
+            await self.db.store_message(self.session_id, assistant_message)
+
+            # 6. Process and store any extracted information
+            self._process_answer(message, response)
+
+            return response
+
         except Exception as e:
-            logger.error(f"Unexpected error: {str(e)}")
-            return self._create_error_response(
-                "An unexpected error occurred. Please try again."
-            )
+            logger.error(f"Error processing query: {str(e)}", exc_info=True)
+            return self._create_error_response(str(e))
 
     def reset(self) -> None:
         """Reset the session state and start a new conversation"""
