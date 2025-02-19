@@ -18,11 +18,49 @@ document.addEventListener('DOMContentLoaded', function() {
 
     // Add welcome message
     function addWelcomeMessage() {
-        const welcomeData = {
-            type: "answer",
-            text: "👋 Hi there! I'm your friendly Babywise Assistant, here to help make your parenting journey a little easier.\n\nI can help you with:\n👶 Parenting Guidance\n- Sleep schedules and routines\n- Feeding advice and meal planning\n- Development milestones\n- Daily care and routines\n- Behavior and learning tips\n\n🛍️ Baby Gear Support\n- Product recommendations when needed\n- Personalized suggestions for your needs\n- Help finding the right gear for your family\n\nHow can I assist you today? Feel free to ask about any parenting topics or baby gear questions!"
-        };
-        addMessage(welcomeData, 'assistant');
+        const welcomeHtml = `
+<div class="welcome-message">
+    <h2>👋 Hi there! I'm your friendly Babywise Assistant, here to help make your parenting journey a little easier.</h2>
+
+    <div class="section">
+        <div class="section-title">😊 Parenting Guidance</div>
+        <ul>
+            <li>Sleep schedules and routines</li>
+            <li>Feeding advice and meal planning</li>
+            <li>Development milestones</li>
+            <li>Daily care and routines</li>
+            <li>Behavior and learning tips</li>
+        </ul>
+    </div>
+
+    <div class="section">
+        <div class="section-title">🛍️ Baby Gear Support</div>
+        <ul>
+            <li>Product recommendations when needed</li>
+            <li>Personalized suggestions for your needs</li>
+            <li>Help finding the right gear for your family</li>
+        </ul>
+    </div>
+
+    <div>How can I assist you today? Feel free to ask about any parenting topics or baby gear questions!</div>
+</div>`;
+
+        const messageDiv = document.createElement('div');
+        messageDiv.className = 'message assistant';
+        
+        const contentDiv = document.createElement('div');
+        contentDiv.className = 'message-content';
+        contentDiv.innerHTML = welcomeHtml;
+        
+        messageDiv.appendChild(contentDiv);
+        
+        const timestamp = document.createElement('div');
+        timestamp.className = 'message-timestamp';
+        timestamp.textContent = formatTimestamp(new Date());
+        messageDiv.appendChild(timestamp);
+        
+        chatMessages.appendChild(messageDiv);
+        chatMessages.scrollTop = chatMessages.scrollHeight;
     }
 
     function formatTimestamp(date) {
