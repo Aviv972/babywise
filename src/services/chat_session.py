@@ -342,11 +342,11 @@ class ChatSession:
     async def get_state(self) -> Dict[str, Any]:
         """Get the current state of the chat session"""
         try:
-            # Get messages from both storages
+            # Get messages from storage
             messages = await self.db.get_conversation_history(self.session_id)
             
-            # Get context from persistent storage
-            context = await self.db.get_context(self.session_id)
+            # Get context info
+            context = self.db.get_context_info(self.session_id)
             
             return {
                 'session_id': self.session_id,
@@ -362,14 +362,14 @@ class ChatSession:
             }
 
     def store_answer(self, field: str, answer: str) -> None:
-        """Store an answer for a specific field in both memory and database"""
+        """Store an answer for a specific field"""
         self.context.add_clarification(field, answer)
-        self.db.add_context_info(self.conversation_id, field, answer)
+        self.db.add_context_info(self.session_id, field, answer)
 
-    def get_recent_context(self, limit: int = 5) -> List[Dict]:
-        """Get recent conversation history from database"""
-        history = self.db.get_conversation_history(self.conversation_id, limit)
-        context_info = self.db.get_context_info(self.conversation_id)
+    def get_recent_context(self, limit: int = 5) -> Dict[str, Any]:
+        """Get recent conversation context"""
+        history = self.db.get_conversation_history(self.session_id, limit)
+        context_info = self.db.get_context_info(self.session_id)
         return {
             'history': history,
             'context': context_info
