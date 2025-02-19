@@ -54,7 +54,7 @@ async def startup_event():
     try:
         # Initialize DB
         db = DatabaseManager()
-        db.create_tables()
+        await db.initialize()
         
         # Log environment variables
         logger = logging.getLogger(__name__)

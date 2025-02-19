@@ -22,7 +22,9 @@ async def get_chat_session() -> ChatSession:
             if not container.agent_factory:
                 logger.error("Agent factory not initialized!")
                 raise RuntimeError("Chat service not properly initialized")
-            chat_sessions["manager"] = ChatSession(container.agent_factory)
+            session = ChatSession(container.agent_factory)
+            await session.initialize()
+            chat_sessions["manager"] = session
             logger.info("New chat session created successfully")
         return chat_sessions["manager"]
     except Exception as e:

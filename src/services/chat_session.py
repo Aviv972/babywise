@@ -27,16 +27,21 @@ class ChatSession:
         self.agent_factory = agent_factory
         self.db = DatabaseManager()
         self.session_id = str(uuid.uuid4())
-        self._initialize_session()
         self.context = QueryContext()
         self.conversation_history = []
         self.current_agent = None
-        # Initialize a new conversation in the database
-        self.conversation_id = self.db.create_conversation()
         self.logger = logging.getLogger(__name__)
+        self.conversation_id = None
         self.logger.info(f"Created new chat session with ID: {self.session_id}")
 
-    def _initialize_session(self):
+    async def initialize(self):
+        """Initialize the chat session asynchronously"""
+        await self.db.initialize()
+        await self._initialize_session()
+        # Initialize a new conversation in the database
+        self.conversation_id = self.db.create_conversation()
+
+    async def _initialize_session(self):
         """Initialize a new chat session in the database"""
         conn = self.db.get_connection()
         cursor = conn.cursor()
@@ -247,12 +252,12 @@ class ChatSession:
 
     async def process_query(self, message: str) -> Dict[str, Any]:
         """Process a user query and return the response"""
+        response = None
+        formatted_response = None
         try:
             # 1. Validate message
             if not self._validate_message(message):
-                return self._create_error_response(
-                    "Please provide a valid message"
-                )
+                return self._create_error_response("Please provide a valid message")
 
             # 2. Get appropriate agent and process query
             try:
@@ -272,7 +277,7 @@ class ChatSession:
                         'last_question': None
                     }
                 
-                # Process with context
+                # Process with context - THIS IS THE MAIN PROCESSING STEP
                 response = await self.current_agent.process_query(
                     message,
                     context=context_state
@@ -280,57 +285,52 @@ class ChatSession:
                 
                 if not response or 'text' not in response:
                     raise ModelProcessingError("Invalid response from model")
-                    
-            except Exception as e:
-                logger.error(f"Model processing error: {str(e)}")
-                raise ModelProcessingError(str(e))
 
-            # 3. Store conversation data in transaction
-            try:
-                async with self._get_db_transaction():
-                    # Store user message
-                    user_message = self._create_message_object(message, 'user')
-                    await self.db.store_message(self.session_id, user_message)
-
-                    # Store assistant response
-                    assistant_message = self._create_message_object(response['text'], 'assistant')
-                    await self.db.store_message(self.session_id, assistant_message)
-
-                    # Extract and store context
-                    if context := self._extract_and_store_context(message):
-                        await self.db.store_context(self.session_id, context)
+                # 3. Only if processing succeeds, store everything in a single transaction
+                try:
+                    async with self._get_db_transaction():
+                        # Prepare all data for storage
+                        user_message = self._create_message_object(message, 'user')
+                        assistant_message = self._create_message_object(response['text'], 'assistant')
+                        context_data = self._extract_and_store_context(message)
                         
-                    logger.info("Successfully stored conversation data")
-                    
-            except Exception as e:
-                logger.error(f"Database error: {str(e)}")
-                # Continue with response even if storage fails
-                logger.warning("Continuing with response despite storage failure")
-
-            # 4. Format and return response
-            formatted_response = {
-                'type': response.get('type', 'answer'),
-                'text': response['text'],
-                'timestamp': datetime.utcnow().isoformat(),
-                'role': 'assistant',
-                'metadata': {
-                    'agent_type': self.current_agent.__class__.__name__,
-                    'confidence': response.get('confidence', 1.0)
+                        # Store everything in a single transaction
+                        await asyncio.gather(
+                            self.db.store_message(self.session_id, user_message),
+                            self.db.store_message(self.session_id, assistant_message),
+                            self.db.store_context(self.session_id, context_data) if context_data else asyncio.sleep(0)
+                        )
+                        logger.info("Successfully stored all conversation data in transaction")
+                        
+                except Exception as e:
+                    logger.error(f"Database storage error: {str(e)}")
+                    # Continue with response even if storage fails
+                    logger.warning("Continuing with response despite storage failure")
+                
+                # 4. Format and return response
+                formatted_response = {
+                    'type': response.get('type', 'answer'),
+                    'text': response['text'],
+                    'timestamp': datetime.utcnow().isoformat(),
+                    'role': 'assistant',
+                    'metadata': {
+                        'agent_type': self.current_agent.__class__.__name__,
+                        'confidence': response.get('confidence', 1.0)
+                    }
                 }
-            }
 
-            return formatted_response
-
-        except ModelProcessingError as e:
-            logger.error(f"Model processing error: {str(e)}")
-            return self._create_error_response(
-                "I'm having trouble processing your request. Please try again."
-            )
+                return formatted_response
+                
+            except ModelProcessingError as e:
+                logger.error(f"Model processing error: {str(e)}")
+                return self._create_error_response(
+                    "I'm having trouble processing your request. Please try again."
+                )
             
         except DatabaseError as e:
             logger.error(f"Database error: {str(e)}")
             # If we have a response, return it despite DB error
-            if 'formatted_response' in locals():
+            if response and formatted_response:
                 return formatted_response
             return self._create_error_response(
                 "I processed your request but couldn't save the conversation."

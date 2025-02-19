@@ -5,6 +5,7 @@ import logging
 from datetime import datetime
 import json
 import asyncio
+from contextlib import asynccontextmanager
 
 logger = logging.getLogger(__name__)
 
@@ -12,6 +13,7 @@ class PersistentStorage:
     def __init__(self):
         self.client = None
         self.db = None
+        self.session = None
         try:
             # Get or create event loop
             try:
@@ -66,6 +68,76 @@ class PersistentStorage:
             logger.error(f"Error initializing MongoDB: {str(e)}")
             self.client = None
             self.db = None
+
+    @asynccontextmanager
+    async def transaction(self):
+        """Context manager for MongoDB transactions"""
+        if not await self._is_connected():
+            raise DatabaseError("MongoDB not connected")
+            
+        session = await self.client.start_session()
+        try:
+            async with session.start_transaction():
+                yield session
+                await session.commit_transaction()
+        except Exception as e:
+            await session.abort_transaction()
+            logger.error(f"MongoDB transaction failed: {str(e)}")
+            raise DatabaseError(f"MongoDB transaction failed: {str(e)}")
+        finally:
+            await session.end_session()
+
+    async def store_message_batch(self, messages: List[Dict[str, Any]]) -> bool:
+        """Store multiple messages in a single transaction"""
+        if not await self._is_connected():
+            logger.warning("MongoDB not connected, skipping batch message storage")
+            return False
+
+        try:
+            async with self.transaction() as session:
+                # Create tasks for all messages
+                operations = [
+                    self.db.messages.insert_one(
+                        {**msg, 'timestamp': datetime.utcnow()},
+                        session=session
+                    )
+                    for msg in messages
+                ]
+                # Execute all operations in transaction
+                await asyncio.gather(*operations)
+                logger.info(f"Stored {len(messages)} messages in MongoDB transaction")
+                return True
+        except Exception as e:
+            logger.error(f"Error in MongoDB batch message storage: {str(e)}")
+            return False
+
+    async def store_context_batch(self, session_id: str, context_items: List[Dict[str, Any]]) -> bool:
+        """Store multiple context items in a single transaction"""
+        if not await self._is_connected():
+            logger.warning("MongoDB not connected, skipping batch context storage")
+            return False
+
+        try:
+            async with self.transaction() as session:
+                # Prepare context data
+                context_data = {
+                    'session_id': session_id,
+                    'timestamp': datetime.utcnow(),
+                    'items': context_items
+                }
+                
+                # Update or insert context
+                await self.db.context.update_one(
+                    {'session_id': session_id},
+                    {'$set': context_data},
+                    upsert=True,
+                    session=session
+                )
+                logger.info(f"Stored context batch for session {session_id}")
+                return True
+        except Exception as e:
+            logger.error(f"Error in MongoDB batch context storage: {str(e)}")
+            return False
 
     async def _is_connected(self) -> bool:
         """Check if MongoDB is connected and verify TLS configuration"""
