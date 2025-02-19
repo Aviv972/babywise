@@ -3,15 +3,45 @@ document.addEventListener('DOMContentLoaded', function() {
     const messageInput = document.getElementById('message-input');
     const chatMessages = document.getElementById('chat-messages');
     const submitButton = chatForm.querySelector('button');
+    const typingIndicator = document.getElementById('typing-indicator');
     
     let awaitingAnswer = false;
     let currentField = null;
-    let sessionId = 'default';  // Add session ID
+    let sessionId = 'default';
+    let lastMessageGroup = null;
 
     // Function to detect text direction
     function isRTL(text) {
         const rtlChars = /[\u0591-\u07FF\u200F\u202B\u202E\uFB1D-\uFDFD\uFE70-\uFEFC]/;
         return rtlChars.test(text);
+    }
+
+    // Add welcome message
+    function addWelcomeMessage() {
+        const welcomeData = {
+            type: "answer",
+            text: "👋 Hi there! I'm your friendly Babywise Assistant, here to help make your parenting journey a little easier.\n\nI can help you with:\n👶 Parenting Guidance\n- Sleep schedules and routines\n- Feeding advice and meal planning\n- Development milestones\n- Daily care and routines\n- Behavior and learning tips\n\n🛍️ Baby Gear Support\n- Product recommendations when needed\n- Personalized suggestions for your needs\n- Help finding the right gear for your family\n\nHow can I assist you today? Feel free to ask about any parenting topics or baby gear questions!"
+        };
+        addMessage(welcomeData, 'assistant');
+    }
+
+    function formatTimestamp(date) {
+        return date.toLocaleTimeString('en-US', { 
+            hour: 'numeric', 
+            minute: '2-digit',
+            hour12: true 
+        });
+    }
+
+    function shouldGroupMessage(type, lastGroup) {
+        if (!lastGroup) return false;
+        if (lastGroup.type !== type) return false;
+        
+        const lastTime = new Date(lastGroup.timestamp);
+        const currentTime = new Date();
+        const timeDiff = (currentTime - lastTime) / 1000; // difference in seconds
+        
+        return timeDiff < 60; // group messages if less than 1 minute apart
     }
 
     function addMessage(data, type) {
@@ -24,6 +54,7 @@ document.addEventListener('DOMContentLoaded', function() {
         const contentDiv = document.createElement('div');
         contentDiv.className = 'message-content';
         
+        // Handle different message formats
         if (typeof data === 'string') {
             contentDiv.textContent = data;
         }
@@ -67,15 +98,28 @@ document.addEventListener('DOMContentLoaded', function() {
         
         messageDiv.appendChild(contentDiv);
         
-        // Add timestamp
-        const timestamp = document.createElement('div');
-        timestamp.className = 'message-timestamp';
-        timestamp.textContent = new Date().toLocaleTimeString('en-US', { 
-            hour: 'numeric', 
-            minute: '2-digit',
-            hour12: true 
-        });
-        messageDiv.appendChild(timestamp);
+        // Handle message grouping
+        const shouldGroup = shouldGroupMessage(type, lastMessageGroup);
+        if (!shouldGroup) {
+            // Add timestamp only for first message in group
+            const timestamp = document.createElement('div');
+            timestamp.className = 'message-timestamp';
+            timestamp.textContent = formatTimestamp(new Date());
+            messageDiv.appendChild(timestamp);
+            
+            // Update spacing classes
+            if (lastMessageGroup && lastMessageGroup.type !== type) {
+                messageDiv.style.marginTop = '12px';
+            }
+        } else {
+            messageDiv.style.marginTop = '1px';
+        }
+        
+        // Update last message group
+        lastMessageGroup = {
+            type: type,
+            timestamp: new Date()
+        };
         
         // Auto-detect direction
         if (isRTL(messageDiv.textContent)) {
@@ -83,30 +127,40 @@ document.addEventListener('DOMContentLoaded', function() {
             messageDiv.style.textAlign = 'right';
         }
         
-        // Insert message in correct order (before typing indicator if it exists)
-        const typingIndicator = document.getElementById('typing-indicator');
+        // Insert message in correct order
         if (typingIndicator && type === 'user') {
             chatMessages.insertBefore(messageDiv, typingIndicator);
         } else {
             chatMessages.appendChild(messageDiv);
         }
-        chatMessages.scrollTop = chatMessages.scrollHeight;
+        
+        // Smooth scroll to bottom
+        chatMessages.scrollTo({
+            top: chatMessages.scrollHeight,
+            behavior: 'smooth'
+        });
     }
 
-    // Auto-detect input direction
+    // Handle input changes
     messageInput.addEventListener('input', function() {
+        // Auto-detect direction
         const isRtl = isRTL(this.value);
         this.style.direction = isRtl ? 'rtl' : 'ltr';
         this.style.textAlign = isRtl ? 'right' : 'left';
+        
+        // Toggle send button state
+        submitButton.disabled = !this.value.trim();
+        submitButton.style.color = this.value.trim() ? 'var(--whatsapp-green)' : '#8696A0';
     });
 
+    // Handle form submission
     chatForm.addEventListener('submit', async function(e) {
         e.preventDefault();
         
         const message = messageInput.value.trim();
         if (!message) return;
 
-        // Disable input and button while processing
+        // Disable input while processing
         messageInput.disabled = true;
         submitButton.disabled = true;
 
@@ -114,10 +168,14 @@ document.addEventListener('DOMContentLoaded', function() {
         addMessage({ type: "user", text: message }, 'user');
         messageInput.value = '';
 
-        // Show typing indicator
-        const typingIndicator = document.getElementById('typing-indicator');
-        typingIndicator.style.display = 'block';
-        chatMessages.scrollTop = chatMessages.scrollHeight;
+        // Show typing indicator with delay
+        setTimeout(() => {
+            typingIndicator.style.display = 'block';
+            chatMessages.scrollTo({
+                top: chatMessages.scrollHeight,
+                behavior: 'smooth'
+            });
+        }, 200);
 
         try {
             console.log("Sending request to /chat with:", { message, sessionId });
@@ -132,8 +190,10 @@ document.addEventListener('DOMContentLoaded', function() {
                 }),
             });
 
-            // Hide typing indicator
-            typingIndicator.style.display = 'none';
+            // Hide typing indicator with delay
+            setTimeout(() => {
+                typingIndicator.style.display = 'none';
+            }, 500);
 
             if (!response.ok) {
                 throw new Error(`HTTP error! status: ${response.status}`);
@@ -145,7 +205,10 @@ document.addEventListener('DOMContentLoaded', function() {
             // Handle different response types
             if (data && data.type) {
                 console.log(`Processing ${data.type} response:`, data);
-                addMessage(data, data.type === "question" ? 'bot-question' : 'bot');
+                // Add slight delay to simulate typing
+                setTimeout(() => {
+                    addMessage(data, data.type === "question" ? 'assistant' : 'assistant');
+                }, 700);
             } else {
                 console.error("Unexpected response format:", data);
                 console.error("Response structure:", JSON.stringify(data, null, 2));
@@ -157,7 +220,7 @@ document.addEventListener('DOMContentLoaded', function() {
             }
 
         } catch (error) {
-            // Hide typing indicator on error
+            // Hide typing indicator
             typingIndicator.style.display = 'none';
             
             console.error('Error:', error);
@@ -169,8 +232,15 @@ document.addEventListener('DOMContentLoaded', function() {
         } finally {
             // Re-enable input and button
             messageInput.disabled = false;
-            submitButton.disabled = false;
+            submitButton.disabled = !messageInput.value.trim();
             messageInput.focus();
         }
     });
+
+    // Add welcome message on load
+    addWelcomeMessage();
+
+    // Initial button state
+    submitButton.disabled = true;
+    submitButton.style.color = '#8696A0';
 }); 
