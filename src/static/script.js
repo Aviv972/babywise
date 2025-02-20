@@ -375,37 +375,16 @@ document.addEventListener('DOMContentLoaded', function() {
     // Hide typing indicator initially
     typingIndicator.style.display = 'none';
 
-    // Handle disclaimer popup
-    function handleDisclaimer() {
-        // Only set up the event listener if this is the first session
-        if (!localStorage.getItem('hasSeenDisclaimer')) {
-            messageInput.addEventListener('focus', function showDisclaimer() {
-                if (disclaimerOverlay && !sessionStorage.getItem('disclaimerShown')) {
-                    // Clear any existing content
-                    const disclaimerContent = disclaimerOverlay.querySelector('.disclaimer-content p');
-                    if (disclaimerContent) {
-                        disclaimerContent.textContent = 'This assistant provides general parenting guidance and support for everyday questions. For any medical concerns, please consult your healthcare provider.';
-                    }
-                    disclaimerOverlay.style.display = 'block';
-                    sessionStorage.setItem('disclaimerShown', 'true');
-                }
-                // Remove the event listener after showing
-                messageInput.removeEventListener('focus', showDisclaimer);
-            }, { once: true });
-        }
+    // Show disclaimer if not already accepted
+    if (!sessionStorage.getItem('disclaimerAccepted')) {
+        disclaimerOverlay.style.display = 'flex';
+    } else {
+        disclaimerOverlay.style.display = 'none';
     }
 
-    // Close disclaimer and store in session
-    if (closeDisclaimerButton) {
-        closeDisclaimerButton.addEventListener('click', function() {
-            if (disclaimerOverlay) {
-                disclaimerOverlay.style.display = 'none';
-                localStorage.setItem('hasSeenDisclaimer', 'true');
-                sessionStorage.setItem('disclaimerAccepted', 'true');
-            }
-        });
-    }
-
-    // Initialize disclaimer handler
-    handleDisclaimer();
+    // Handle disclaimer close button
+    closeDisclaimerButton.addEventListener('click', function() {
+        sessionStorage.setItem('disclaimerAccepted', 'true');
+        disclaimerOverlay.style.display = 'none';
+    });
 }); 
