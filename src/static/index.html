@@ -504,9 +504,153 @@
         .close-disclaimer:hover {
             display: none;
         }
+
+        .disclaimer-modal {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.5);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+            opacity: 0;
+            animation: fadeIn 0.3s ease forwards;
+        }
+
+        .disclaimer-content {
+            background: white;
+            padding: 28px 24px;
+            border-radius: 8px;
+            width: 90%;
+            max-width: 500px;
+            text-align: left;
+            transform: scale(0.95);
+            animation: scaleIn 0.3s ease forwards;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
+
+        .disclaimer-content h2 {
+            font-size: 20px;
+            font-weight: 600;
+            color: #000;
+            margin-bottom: 20px;
+            text-transform: uppercase;
+            text-align: center;
+        }
+
+        .disclaimer-text {
+            margin-bottom: 24px;
+        }
+
+        .disclaimer-text p {
+            font-size: 14px;
+            line-height: 1.6;
+            color: #444;
+            margin-bottom: 16px;
+        }
+
+        .disclaimer-text .welcome {
+            font-size: 16px;
+            font-weight: 500;
+            color: #000;
+            margin-bottom: 20px;
+        }
+
+        .disclaimer-text .intro {
+            margin-bottom: 20px;
+        }
+
+        .disclaimer-text .points p {
+            margin-bottom: 20px;
+            padding-left: 28px;
+            text-indent: -28px;
+        }
+
+        .disclaimer-text .points strong {
+            color: #000;
+        }
+
+        .disclaimer-text .confirmation {
+            font-style: italic;
+            color: #666;
+            margin-top: 24px;
+            text-align: center;
+        }
+
+        .agree-button {
+            background: #000;
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            width: 100%;
+            border-radius: 4px;
+            font-size: 16px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: background-color 0.2s ease;
+        }
+
+        .agree-button:hover {
+            background: #333;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; }
+            to { opacity: 1; }
+        }
+
+        @keyframes scaleIn {
+            from { transform: scale(0.95); }
+            to { transform: scale(1); }
+        }
+
+        /* Mobile optimizations */
+        @media (max-width: 480px) {
+            .disclaimer-content {
+                width: 95%;
+                padding: 24px 20px;
+                max-height: 90vh;
+                overflow-y: auto;
+            }
+
+            .disclaimer-text p {
+                font-size: 13px;
+            }
+
+            .disclaimer-text .welcome {
+                font-size: 15px;
+            }
+        }
+
+        /* Hide modal when dismissed */
+        .disclaimer-modal.hidden {
+            display: none;
+        }
     </style>
 </head>
 <body>
+    <div class="disclaimer-modal" id="disclaimerModal">
+        <div class="disclaimer-content">
+            <h2>DISCLAIMER</h2>
+            <div class="disclaimer-text">
+                <p class="welcome">Welcome to Babywise Assistant! 👶💬</p>
+                
+                <p class="intro">Before you proceed, please take a moment to read this important information:</p>
+                
+                <div class="points">
+                    <p>🔹 <strong>No Medical Advice:</strong> Babywise Assistant provides general parenting tips, guidance, and product recommendations, but it does not offer medical advice. Always consult a qualified healthcare professional for medical concerns, diagnoses, or treatment.</p>
+                    
+                    <p>🔹 <strong>For Informational Purposes Only:</strong> The content shared in this app is intended for educational and informational purposes only and should not replace professional medical advice, diagnosis, or treatment.</p>
+                </div>
+                
+                <p class="confirmation">By clicking "I AGREE", you confirm that you have read and understood this disclaimer.</p>
+            </div>
+            <button class="agree-button" id="agreeButton">I AGREE</button>
+        </div>
+    </div>
     <div class="app-container">
         <div class="chat-header">
             <div class="avatar">

@@ -4,6 +4,8 @@ document.addEventListener('DOMContentLoaded', function() {
     const chatMessages = document.getElementById('chat-messages');
     const submitButton = chatForm.querySelector('button');
     const typingIndicator = document.getElementById('typing-indicator');
+    const disclaimerModal = document.getElementById('disclaimerModal');
+    const agreeButton = document.getElementById('agreeButton');
     const newChatButton = document.getElementById('newChatButton');
     
     let awaitingAnswer = false;
@@ -17,10 +19,38 @@ document.addEventListener('DOMContentLoaded', function() {
         localStorage.setItem('sessionId', sessionId);
     }
 
+    // Handle disclaimer visibility
+    function handleDisclaimer() {
+        const hasAcceptedDisclaimer = sessionStorage.getItem(`disclaimer_${sessionId}`);
+        if (!hasAcceptedDisclaimer) {
+            disclaimerModal.classList.remove('hidden');
+            // Disable scrolling on the body while disclaimer is shown
+            document.body.style.overflow = 'hidden';
+        } else {
+            disclaimerModal.classList.add('hidden');
+            document.body.style.overflow = '';
+        }
+    }
+
+    // Handle disclaimer acceptance
+    function acceptDisclaimer() {
+        sessionStorage.setItem(`disclaimer_${sessionId}`, 'true');
+        disclaimerModal.classList.add('hidden');
+        document.body.style.overflow = '';
+    }
+
+    // Event listener for the agree button
+    if (agreeButton) {
+        agreeButton.addEventListener('click', acceptDisclaimer);
+    }
+
     // Clear any existing session data on new chat
     if (window.location.href.includes('?new')) {
         sessionStorage.clear();
     }
+
+    // Initialize disclaimer on page load
+    handleDisclaimer();
 
     // Load chat history from localStorage
     function loadChatHistory() {
