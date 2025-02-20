@@ -199,7 +199,7 @@ Use TypeScript for type safety (if applicable).
 4.5 Code Patterns
 Use the repository pattern for data access.
 Implement dependency injection where appropriate.
-Use [specific design pattern] for [particular use case].
+
 4.6 Documentation
 Use JSDoc for inline documentation.
 Keep README.md up to date with project setup and usage instructions.
@@ -407,3 +407,225 @@ These rules ensure:
 6. Efficient context utilization
 
 The key principle is that the LLM should always have access to the full context when making decisions, whether generating questions or responses.
+
+Chat UI Requirements: Web App + Responsive Design
+This document ensures the chat interface is optimized for both desktop and mobile views while maintaining a WhatsApp-like experience.
+
+1️⃣ Layout & Background
+Issue:
+The chat should not be full-screen but a floating panel for the web app.
+
+Fix:
+Chat Container
+Desktop:
+
+Max Width: 700px
+Height: 85vh (chat should not take the entire screen but stay visible).
+Margin: auto (to center the chat in the viewport).
+Box Shadow: 0px 4px 10px rgba(0, 0, 0, 0.1); (for a soft floating effect).
+Border Radius: 12px.
+Mobile:
+
+Width: 100% (full width for small screens).
+Height: 100vh (full height for a better mobile experience).
+Border Radius: 0px (mobile chat should be fullscreen for usability).
+Background
+Background Color: #E5DDD5 (light beige, similar to WhatsApp).
+Pattern:
+Use a semi-transparent PNG or CSS repeating-linear-gradient to match WhatsApp’s subtle background texture.
+2️⃣ Responsive Design Adjustments
+Issue:
+The chat UI should dynamically adjust based on screen size.
+
+Fix:
+Use CSS media queries to adapt layout for mobile, tablet, and desktop.
+Implement fluid margins and padding for different screen sizes.
+Ensure consistent font sizes across devices.
+css
+Copy
+Edit
+/* Mobile Screens */
+@media (max-width: 768px) {
+    .chat-container {
+        width: 100%;
+        height: 100vh;
+        border-radius: 0px;
+    }
+    .message-bubble {
+        max-width: 90%;
+    }
+}
+
+/* Tablet and Small Desktop Screens */
+@media (min-width: 769px) and (max-width: 1024px) {
+    .chat-container {
+        width: 80%;
+        height: 85vh;
+    }
+}
+
+/* Large Screens */
+@media (min-width: 1025px) {
+    .chat-container {
+        width: 700px;
+        height: 85vh;
+    }
+}
+3️⃣ Font Style
+Issue:
+The font does not match WhatsApp’s standard font.
+
+Fix:
+Use "Helvetica Neue", "San Francisco", or "Roboto".
+Font sizes:
+Messages: 16px
+Timestamps: 12px
+Ensure consistent line height for readability.
+4️⃣ Message Bubble Design
+Issue:
+The chat bubbles need to match WhatsApp’s compact, rounded look.
+
+Fix:
+User Messages (Outgoing)
+Background Color: #DCF8C6 (light green).
+Text Color: #000000 (black).
+Border Radius: 16px.
+Alignment: Right-aligned.
+Padding: 8px vertical, 12px horizontal.
+Max Width: 75% of the chat window.
+Agent Messages (Incoming)
+Background Color: #FFFFFF (white).
+Text Color: #000000 (black).
+Border Radius: 16px.
+Alignment: Left-aligned.
+Padding: 8px vertical, 12px horizontal.
+Max Width: 75% of the chat window.
+5️⃣ Timestamp Placement
+Issue:
+The timestamp appears detached and misaligned.
+
+Fix:
+Position: Inside the message bubble, bottom right.
+Font Size: 12px.
+Color: Light gray (#999999).
+Alignment: Right-aligned with the last line of the message text.
+6️⃣ Typing Indicator
+Issue:
+No visible typing animation when the agent is responding.
+
+Fix:
+Implement a three-dot animation (•••) inside a small chat bubble.
+Background color: #FFFFFF (same as agent messages).
+Alignment: Left-aligned (same as agent messages).
+Use animation: Fading-in-and-out effect.
+css
+Copy
+Edit
+.typing-indicator {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 25px;
+  background: #FFFFFF;
+  border-radius: 16px;
+}
+
+.typing-indicator span {
+  height: 6px;
+  width: 6px;
+  background-color: #999999;
+  border-radius: 50%;
+  margin: 2px;
+  animation: blink 1.4s infinite;
+}
+
+.typing-indicator span:nth-child(2) {
+  animation-delay: 0.2s;
+}
+
+.typing-indicator span:nth-child(3) {
+  animation-delay: 0.4s;
+}
+
+@keyframes blink {
+  0% { opacity: 0.3; }
+  50% { opacity: 1; }
+  100% { opacity: 0.3; }
+}
+7️⃣ Message Spacing and Alignment
+Issue:
+Spacing between messages is inconsistent.
+
+Fix:
+Maintain 4px margin between consecutive messages from the same sender.
+Add a 10-12px margin between user and agent messages.
+Ensure consistent vertical spacing for better readability.
+8️⃣ Input Field & Send Button
+Issue:
+The input field does not match WhatsApp’s design.
+
+Fix:
+Background color: #FFFFFF
+Border: None
+Border radius: 24px
+Height: 40px
+Padding: 8px 12px
+Font size: 16px
+Send button:
+Use a paper plane icon (➤).
+Color: #128C7E (WhatsApp green).
+Align inside the input box, right side.
+css
+Copy
+Edit
+.input-container {
+  display: flex;
+  align-items: center;
+  background: #ffffff;
+  border-radius: 24px;
+  padding: 8px 12px;
+}
+
+.input-container input {
+  flex: 1;
+  border: none;
+  font-size: 16px;
+}
+
+.input-container button {
+  background: none;
+  border: none;
+  color: #128C7E;
+  font-size: 20px;
+  cursor: pointer;
+}
+9️⃣ Responsive Design Summary
+Mobile (width < 768px) → Chat should be full width, full height.
+Tablet (768px - 1024px) → Chat should be 80% of the width.
+Desktop (width > 1024px) → Chat should be centered at 700px width.
+css
+Copy
+Edit
+@media (max-width: 768px) {
+    .chat-container {
+        width: 100%;
+        height: 100vh;
+        border-radius: 0px;
+    }
+    .message-bubble {
+        max-width: 90%;
+    }
+}
+@media (min-width: 769px) and (max-width: 1024px) {
+    .chat-container {
+        width: 80%;
+        height: 85vh;
+    }
+}
+@media (min-width: 1025px) {
+    .chat-container {
+        width: 700px;
+        height: 85vh;
+    }
+}
