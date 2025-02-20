@@ -60,13 +60,10 @@
                 height: 100%;
                 height: -webkit-fill-available;
                 height: fill-available;
-                min-height: 100%;
-                min-height: -webkit-fill-available;
-                min-height: fill-available;
                 overflow: hidden;
                 position: fixed;
                 width: 100%;
-                touch-action: none;
+                touch-action: manipulation;
             }
             
             .app-container {
@@ -81,16 +78,16 @@
                 left: 0;
                 right: 0;
                 bottom: 0;
+                margin: 0;
+                border-radius: 0;
                 overflow: hidden;
             }
 
             .chat-header {
                 position: sticky;
                 top: 0;
-                z-index: 100;
+                z-index: 2;
                 flex-shrink: 0;
-                background-color: var(--header-bg);
-                border-bottom: 1px solid rgba(0,0,0,0.1);
             }
 
             .chat-messages {
@@ -98,26 +95,25 @@
                 overflow-y: scroll;
                 -webkit-overflow-scrolling: touch;
                 overscroll-behavior-y: contain;
-                position: relative;
                 padding: 16px;
-                margin: 0;
-                scroll-behavior: smooth;
+                margin-bottom: var(--footer-height);
+                position: relative;
+                height: auto;
+                min-height: 0;
                 will-change: transform;
                 transform: translateZ(0);
-                background-attachment: local;
+                padding-bottom: 80px;
             }
 
             .chat-input {
-                position: sticky;
+                position: fixed;
                 bottom: 0;
                 left: 0;
                 right: 0;
-                z-index: 100;
+                z-index: 2;
                 background: #fff;
                 padding: 8px;
                 border-top: 1px solid rgba(0,0,0,0.1);
-                flex-shrink: 0;
-                margin: 0;
             }
 
             #chat-form {
@@ -143,12 +139,12 @@
                 -webkit-appearance: none;
                 appearance: none;
                 outline: none;
-                z-index: 1;
             }
 
             .message {
                 max-width: 85%;
                 word-break: break-word;
+                margin-bottom: 8px;
             }
         }
 
