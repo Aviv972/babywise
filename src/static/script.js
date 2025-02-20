@@ -170,12 +170,30 @@ document.addEventListener('DOMContentLoaded', function() {
         submitButton.style.color = this.value.trim() ? '#00a884' : '#8696a0';
     });
 
+    // Language detection function
+    function detectLanguage(text) {
+        // Hebrew detection
+        const hebrewPattern = /[\u0590-\u05FF\u0600-\u06FF]/;
+        if (hebrewPattern.test(text)) return 'he';
+        
+        // Add more language detection patterns as needed
+        // Arabic
+        const arabicPattern = /[\u0600-\u06FF]/;
+        if (arabicPattern.test(text)) return 'ar';
+        
+        // Default to English
+        return 'en';
+    }
+
     // Handle form submission
     chatForm.addEventListener('submit', async function(e) {
         e.preventDefault();
         
         const message = messageInput.value.trim();
         if (!message) return;
+
+        // Detect message language
+        const detectedLanguage = detectLanguage(message);
 
         // Disable input while processing
         messageInput.disabled = true;
@@ -185,7 +203,7 @@ document.addEventListener('DOMContentLoaded', function() {
         addMessage({ type: "user", text: message }, 'user');
         messageInput.value = '';
 
-        // Show typing indicator immediately after user message
+        // Show typing indicator
         typingIndicator.style.display = 'flex';
         chatMessages.scrollTo({
             top: chatMessages.scrollHeight,
@@ -193,7 +211,6 @@ document.addEventListener('DOMContentLoaded', function() {
         });
 
         try {
-            console.log("Sending request to /chat with:", { message, sessionId });
             const response = await fetch('/chat', {
                 method: 'POST',
                 headers: {
@@ -201,11 +218,11 @@ document.addEventListener('DOMContentLoaded', function() {
                 },
                 body: JSON.stringify({ 
                     message: message,
-                    session_id: sessionId
+                    session_id: sessionId,
+                    language: detectedLanguage // Send detected language to backend
                 }),
             });
 
-            // Hide typing indicator before showing response
             typingIndicator.style.display = 'none';
 
             if (!response.ok) {
@@ -215,35 +232,33 @@ document.addEventListener('DOMContentLoaded', function() {
             const data = await response.json();
             console.log("Raw response from server:", data);
 
-            // Handle different response types
             if (data && data.type) {
-                console.log(`Processing ${data.type} response:`, data);
-                // Add slight delay to simulate typing
                 setTimeout(() => {
                     addMessage(data, data.type === "question" ? 'assistant' : 'assistant');
                 }, 700);
             } else {
                 console.error("Unexpected response format:", data);
-                console.error("Response structure:", JSON.stringify(data, null, 2));
                 addMessage({
                     type: "answer",
-                    text: "I apologize, but I received an unexpected response format. Please try again.",
+                    text: detectedLanguage === 'he' 
+                        ? 'מצטער, אך התקבלה תשובה בפורמט לא צפוי. אנא נסה שוב.'
+                        : 'I apologize, but I received an unexpected response format. Please try again.',
                     metadata: { category: "error" }
                 }, 'system');
             }
 
         } catch (error) {
-            // Hide typing indicator
             typingIndicator.style.display = 'none';
             
             console.error('Error:', error);
             addMessage({
                 type: "answer",
-                text: 'Sorry, I encountered an error. Please try again.',
+                text: detectedLanguage === 'he'
+                    ? 'מצטער, אך אירעה שגיאה. אנא נסה שוב.'
+                    : 'Sorry, I encountered an error. Please try again.',
                 metadata: { category: "error" }
             }, 'system');
         } finally {
-            // Re-enable input and button
             messageInput.disabled = false;
             submitButton.disabled = !messageInput.value.trim();
             messageInput.focus();
