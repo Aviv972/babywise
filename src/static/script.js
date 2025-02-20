@@ -19,6 +19,11 @@ document.addEventListener('DOMContentLoaded', function() {
         localStorage.setItem('sessionId', sessionId);
     }
 
+    // Clear any existing disclaimer acceptance on page load
+    if (window.location.href.includes('?new') || !sessionStorage.getItem('disclaimerAccepted')) {
+        sessionStorage.removeItem('disclaimerAccepted');
+    }
+
     // Load chat history from localStorage
     function loadChatHistory() {
         const currentChat = localStorage.getItem(`chat_${sessionId}`);
@@ -52,6 +57,9 @@ document.addEventListener('DOMContentLoaded', function() {
 
     // Start new chat session
     function startNewChat() {
+        // Remove old session data
+        localStorage.removeItem(`chat_${sessionId}`);
+        
         // Generate new session ID
         sessionId = 'session_' + Math.random().toString(36).substr(2, 9);
         localStorage.setItem('sessionId', sessionId);
@@ -133,98 +141,101 @@ document.addEventListener('DOMContentLoaded', function() {
 
     // Modified addMessage function to include history saving
     function addMessage(data, type, saveToHistory = true) {
-        console.log("Adding message:", { data, type });
-        
-        const messageDiv = document.createElement('div');
-        messageDiv.className = `message ${type}`;
-        
-        // Create message content container
-        const contentDiv = document.createElement('div');
-        contentDiv.className = 'message-content';
-        
-        // Handle different message formats
-        if (typeof data === 'string') {
-            contentDiv.textContent = data;
-        }
-        else if (data && (data.type === 'answer' || data.type === 'question')) {
-            contentDiv.textContent = data.text;
+        try {
+            console.log("Adding message:", { data, type });
             
-            // Add product grid if available
-            if (data.products && data.products.length > 0) {
-                const productsDiv = document.createElement('div');
-                productsDiv.className = 'products-grid';
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `message ${type}`;
+            
+            // Create message content container
+            const contentDiv = document.createElement('div');
+            contentDiv.className = 'message-content';
+            
+            // Handle different message formats
+            if (typeof data === 'string') {
+                contentDiv.textContent = data;
+            }
+            else if (data && (data.type === 'answer' || data.type === 'question')) {
+                contentDiv.textContent = data.text || 'No message content';
                 
-                data.products.forEach(product => {
-                    if (product.name && !product.name.startsWith('-')) {
-                        const productCard = document.createElement('div');
-                        productCard.className = 'product-card';
-                        productCard.innerHTML = `
-                            <h3>${product.name}</h3>
-                            ${product.price ? `<div class="price">${product.price}</div>` : ''}
-                            ${product.features ? `<div class="features">${product.features}</div>` : ''}
-                        `;
-                        productsDiv.appendChild(productCard);
+                // Add product grid if available
+                if (data.products && Array.isArray(data.products) && data.products.length > 0) {
+                    const productsDiv = document.createElement('div');
+                    productsDiv.className = 'products-grid';
+                    
+                    data.products.forEach(product => {
+                        if (product && product.name && !product.name.startsWith('-')) {
+                            const productCard = document.createElement('div');
+                            productCard.className = 'product-card';
+                            productCard.innerHTML = `
+                                <h3>${product.name}</h3>
+                                ${product.price ? `<div class="price">${product.price}</div>` : ''}
+                            `;
+                            productsDiv.appendChild(productCard);
+                        }
+                    });
+                    
+                    if (productsDiv.children.length > 0) {
+                        contentDiv.appendChild(productsDiv);
                     }
-                });
-                
-                if (productsDiv.children.length > 0) {
-                    contentDiv.appendChild(productsDiv);
                 }
             }
-        }
-        else if (data && data.text) {
-            contentDiv.textContent = data.text;
-        }
-        else {
-            console.error("Unknown message format:", data);
-            contentDiv.textContent = "Unknown message format";
-        }
-        
-        messageDiv.appendChild(contentDiv);
-        
-        // Handle message grouping
-        const shouldGroup = shouldGroupMessage(type, lastMessageGroup);
-        if (!shouldGroup) {
-            // Add timestamp only for first message in group
-            const timestamp = document.createElement('div');
-            timestamp.className = 'message-timestamp';
-            timestamp.textContent = formatTimestamp(new Date());
-            messageDiv.appendChild(timestamp);
-            
-            // Update spacing classes
-            if (lastMessageGroup && lastMessageGroup.type !== type) {
-                messageDiv.style.marginTop = '8px';
+            else if (data && data.text) {
+                contentDiv.textContent = data.text;
             }
-        } else {
-            messageDiv.style.marginTop = '1px';
+            else {
+                console.error("Unknown message format:", data);
+                contentDiv.textContent = "Unknown message format";
+            }
+            
+            messageDiv.appendChild(contentDiv);
+            
+            // Handle message grouping
+            const shouldGroup = shouldGroupMessage(type, lastMessageGroup);
+            if (!shouldGroup) {
+                // Add timestamp only for first message in group
+                const timestamp = document.createElement('div');
+                timestamp.className = 'message-timestamp';
+                timestamp.textContent = formatTimestamp(new Date());
+                messageDiv.appendChild(timestamp);
+                
+                // Update spacing classes
+                if (lastMessageGroup && lastMessageGroup.type !== type) {
+                    messageDiv.style.marginTop = '8px';
+                }
+            } else {
+                messageDiv.style.marginTop = '1px';
+            }
+            
+            // Update last message group
+            lastMessageGroup = {
+                type: type,
+                timestamp: new Date()
+            };
+            
+            // Auto-detect direction
+            if (isRTL(messageDiv.textContent)) {
+                messageDiv.style.direction = 'rtl';
+                messageDiv.style.textAlign = 'right';
+            }
+            
+            // Always append new messages at the end
+            chatMessages.appendChild(messageDiv);
+            
+            // Move typing indicator to be last
+            if (typingIndicator) {
+                chatMessages.appendChild(typingIndicator);
+            }
+            
+            // Save to history if needed
+            if (saveToHistory) {
+                saveMessageToHistory(data, type);
+            }
+            
+            scrollToBottom();
+        } catch (error) {
+            console.error('Error adding message:', error);
         }
-        
-        // Update last message group
-        lastMessageGroup = {
-            type: type,
-            timestamp: new Date()
-        };
-        
-        // Auto-detect direction
-        if (isRTL(messageDiv.textContent)) {
-            messageDiv.style.direction = 'rtl';
-            messageDiv.style.textAlign = 'right';
-        }
-        
-        // Always append new messages at the end
-        chatMessages.appendChild(messageDiv);
-        
-        // Move typing indicator to be last
-        if (typingIndicator) {
-            chatMessages.appendChild(typingIndicator);
-        }
-        
-        // Save to history if needed
-        if (saveToHistory) {
-            saveMessageToHistory(data, type);
-        }
-        
-        scrollToBottom();
     }
 
     // Handle input changes
@@ -241,12 +252,11 @@ document.addEventListener('DOMContentLoaded', function() {
 
     // Language detection function
     function detectLanguage(text) {
-        // Hebrew detection
-        const hebrewPattern = /[\u0590-\u05FF\u0600-\u06FF]/;
+        // Hebrew detection (excluding Arabic range)
+        const hebrewPattern = /[\u0590-\u05FF]/;
         if (hebrewPattern.test(text)) return 'he';
         
-        // Add more language detection patterns as needed
-        // Arabic
+        // Arabic detection
         const arabicPattern = /[\u0600-\u06FF]/;
         if (arabicPattern.test(text)) return 'ar';
         
@@ -346,19 +356,28 @@ document.addEventListener('DOMContentLoaded', function() {
 
     // Handle disclaimer popup
     function handleDisclaimer() {
-        if (!sessionStorage.getItem('disclaimerAccepted')) {
-            disclaimerOverlay.style.display = 'flex';
-        } else {
-            disclaimerOverlay.style.display = 'none';
+        if (!sessionStorage.getItem('disclaimerShown')) {
+            messageInput.addEventListener('focus', function showDisclaimer() {
+                if (disclaimerOverlay) {
+                    disclaimerOverlay.style.display = 'block';
+                    sessionStorage.setItem('disclaimerShown', 'true');
+                }
+                // Remove the event listener after first show
+                messageInput.removeEventListener('focus', showDisclaimer);
+            }, { once: true });
         }
     }
 
     // Close disclaimer and store in session
-    closeDisclaimerButton.addEventListener('click', function() {
-        disclaimerOverlay.style.display = 'none';
-        sessionStorage.setItem('disclaimerAccepted', 'true');
-    });
+    if (closeDisclaimerButton) {
+        closeDisclaimerButton.addEventListener('click', function() {
+            if (disclaimerOverlay) {
+                disclaimerOverlay.style.display = 'none';
+                sessionStorage.setItem('disclaimerAccepted', 'true');
+            }
+        });
+    }
 
-    // Show disclaimer on page load
+    // Initialize disclaimer handler
     handleDisclaimer();
 }); 
