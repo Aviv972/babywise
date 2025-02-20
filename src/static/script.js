@@ -6,11 +6,76 @@ document.addEventListener('DOMContentLoaded', function() {
     const typingIndicator = document.getElementById('typing-indicator');
     const disclaimerOverlay = document.getElementById('disclaimerOverlay');
     const closeDisclaimerButton = document.getElementById('closeDisclaimer');
+    const newChatButton = document.getElementById('newChatButton');
     
     let awaitingAnswer = false;
     let currentField = null;
-    let sessionId = 'default';
     let lastMessageGroup = null;
+
+    // Initialize or get existing session ID
+    let sessionId = localStorage.getItem('sessionId');
+    if (!sessionId) {
+        sessionId = 'session_' + Math.random().toString(36).substr(2, 9);
+        localStorage.setItem('sessionId', sessionId);
+    }
+
+    // Load chat history from localStorage
+    function loadChatHistory() {
+        const currentChat = localStorage.getItem(`chat_${sessionId}`);
+        if (currentChat) {
+            try {
+                const messages = JSON.parse(currentChat);
+                chatMessages.innerHTML = ''; // Clear existing messages
+                messages.forEach(msg => {
+                    addMessage(msg.data, msg.type, false); // false means don't save to localStorage
+                });
+                scrollToBottom();
+            } catch (e) {
+                console.error('Error loading chat history:', e);
+            }
+        } else {
+            addWelcomeMessage();
+        }
+    }
+
+    // Save message to chat history
+    function saveMessageToHistory(data, type) {
+        try {
+            let currentChat = localStorage.getItem(`chat_${sessionId}`);
+            let messages = currentChat ? JSON.parse(currentChat) : [];
+            messages.push({ data, type, timestamp: new Date().toISOString() });
+            localStorage.setItem(`chat_${sessionId}`, JSON.stringify(messages));
+        } catch (e) {
+            console.error('Error saving message to history:', e);
+        }
+    }
+
+    // Start new chat session
+    function startNewChat() {
+        // Generate new session ID
+        sessionId = 'session_' + Math.random().toString(36).substr(2, 9);
+        localStorage.setItem('sessionId', sessionId);
+        
+        // Clear messages
+        chatMessages.innerHTML = '';
+        
+        // Add welcome message
+        addWelcomeMessage();
+        
+        // Save initial state
+        saveMessageToHistory({
+            type: 'welcome',
+            text: chatMessages.querySelector('.message').textContent
+        }, 'assistant');
+    }
+
+    // Scroll to bottom of chat
+    function scrollToBottom() {
+        chatMessages.scrollTo({
+            top: chatMessages.scrollHeight,
+            behavior: 'smooth'
+        });
+    }
 
     // Function to detect text direction
     function isRTL(text) {
@@ -66,7 +131,8 @@ document.addEventListener('DOMContentLoaded', function() {
         return timeDiff < 60; // group messages if less than 1 minute apart
     }
 
-    function addMessage(data, type) {
+    // Modified addMessage function to include history saving
+    function addMessage(data, type, saveToHistory = true) {
         console.log("Adding message:", { data, type });
         
         const messageDiv = document.createElement('div');
@@ -153,11 +219,12 @@ document.addEventListener('DOMContentLoaded', function() {
             chatMessages.appendChild(typingIndicator);
         }
         
-        // Smooth scroll to bottom
-        chatMessages.scrollTo({
-            top: chatMessages.scrollHeight,
-            behavior: 'smooth'
-        });
+        // Save to history if needed
+        if (saveToHistory) {
+            saveMessageToHistory(data, type);
+        }
+        
+        scrollToBottom();
     }
 
     // Handle input changes
@@ -187,7 +254,10 @@ document.addEventListener('DOMContentLoaded', function() {
         return 'en';
     }
 
-    // Handle form submission
+    // Handle new chat button click
+    newChatButton.addEventListener('click', startNewChat);
+
+    // Modified form submission to include session ID
     chatForm.addEventListener('submit', async function(e) {
         e.preventDefault();
         
@@ -207,10 +277,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
         // Show typing indicator
         typingIndicator.style.display = 'flex';
-        chatMessages.scrollTo({
-            top: chatMessages.scrollHeight,
-            behavior: 'smooth'
-        });
+        scrollToBottom();
 
         try {
             const response = await fetch('/chat', {
@@ -221,7 +288,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 body: JSON.stringify({ 
                     message: message,
                     session_id: sessionId,
-                    language: detectedLanguage // Send detected language to backend
+                    language: detectedLanguage
                 }),
             });
 
@@ -267,8 +334,8 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     });
 
-    // Add welcome message on load
-    addWelcomeMessage();
+    // Load chat history on startup
+    loadChatHistory();
 
     // Initial button state
     submitButton.disabled = true;
@@ -279,7 +346,6 @@ document.addEventListener('DOMContentLoaded', function() {
 
     // Handle disclaimer popup
     function handleDisclaimer() {
-        // Check if user has seen the disclaimer in this session
         if (!sessionStorage.getItem('disclaimerAccepted')) {
             disclaimerOverlay.style.display = 'flex';
         } else {
