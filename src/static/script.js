@@ -20,8 +20,9 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     // Clear any existing disclaimer acceptance on page load
-    if (window.location.href.includes('?new') || !sessionStorage.getItem('disclaimerAccepted')) {
+    if (window.location.href.includes('?new')) {
         sessionStorage.removeItem('disclaimerAccepted');
+        sessionStorage.removeItem('disclaimerShown');
     }
 
     // Load chat history from localStorage
@@ -265,7 +266,27 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     // Handle new chat button click
-    newChatButton.addEventListener('click', startNewChat);
+    newChatButton.addEventListener('click', function() {
+        // Show confirmation dialog
+        const confirmNewChat = confirm('Start a new chat? Your current conversation will be saved in history.');
+        
+        if (confirmNewChat) {
+            // Add visual feedback
+            newChatButton.style.transform = 'scale(0.95)';
+            setTimeout(() => {
+                newChatButton.style.transform = 'scale(1)';
+            }, 200);
+            
+            // Start new chat
+            startNewChat();
+            
+            // Show feedback message
+            addMessage({
+                type: 'system',
+                text: 'Started a new chat session. Previous chat has been saved.'
+            }, 'system');
+        }
+    });
 
     // Modified form submission to include session ID
     chatForm.addEventListener('submit', async function(e) {
@@ -356,13 +377,19 @@ document.addEventListener('DOMContentLoaded', function() {
 
     // Handle disclaimer popup
     function handleDisclaimer() {
-        if (!sessionStorage.getItem('disclaimerShown')) {
+        // Only set up the event listener if this is the first session
+        if (!localStorage.getItem('hasSeenDisclaimer')) {
             messageInput.addEventListener('focus', function showDisclaimer() {
-                if (disclaimerOverlay) {
+                if (disclaimerOverlay && !sessionStorage.getItem('disclaimerShown')) {
+                    // Clear any existing content
+                    const disclaimerContent = disclaimerOverlay.querySelector('.disclaimer-content p');
+                    if (disclaimerContent) {
+                        disclaimerContent.textContent = 'This assistant provides general parenting guidance and support for everyday questions. For any medical concerns, please consult your healthcare provider.';
+                    }
                     disclaimerOverlay.style.display = 'block';
                     sessionStorage.setItem('disclaimerShown', 'true');
                 }
-                // Remove the event listener after first show
+                // Remove the event listener after showing
                 messageInput.removeEventListener('focus', showDisclaimer);
             }, { once: true });
         }
@@ -373,6 +400,7 @@ document.addEventListener('DOMContentLoaded', function() {
         closeDisclaimerButton.addEventListener('click', function() {
             if (disclaimerOverlay) {
                 disclaimerOverlay.style.display = 'none';
+                localStorage.setItem('hasSeenDisclaimer', 'true');
                 sessionStorage.setItem('disclaimerAccepted', 'true');
             }
         });
