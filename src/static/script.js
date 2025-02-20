@@ -4,6 +4,8 @@ document.addEventListener('DOMContentLoaded', function() {
     const chatMessages = document.getElementById('chat-messages');
     const submitButton = chatForm.querySelector('button');
     const typingIndicator = document.getElementById('typing-indicator');
+    const disclaimerOverlay = document.getElementById('disclaimerOverlay');
+    const closeDisclaimerButton = document.getElementById('closeDisclaimer');
     
     let awaitingAnswer = false;
     let currentField = null;
@@ -274,4 +276,23 @@ document.addEventListener('DOMContentLoaded', function() {
 
     // Hide typing indicator initially
     typingIndicator.style.display = 'none';
+
+    // Handle disclaimer popup
+    function handleDisclaimer() {
+        // Check if user has seen the disclaimer in this session
+        if (!sessionStorage.getItem('disclaimerAccepted')) {
+            disclaimerOverlay.style.display = 'flex';
+        } else {
+            disclaimerOverlay.style.display = 'none';
+        }
+    }
+
+    // Close disclaimer and store in session
+    closeDisclaimerButton.addEventListener('click', function() {
+        disclaimerOverlay.style.display = 'none';
+        sessionStorage.setItem('disclaimerAccepted', 'true');
+    });
+
+    // Show disclaimer on page load
+    handleDisclaimer();
 }); 

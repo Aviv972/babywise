@@ -447,9 +447,129 @@
         #message-input:focus {
             outline: none;
         }
+
+        /* Add these styles before the closing </style> tag */
+        .disclaimer-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background-color: rgba(0, 0, 0, 0.6);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+            padding: 20px;
+        }
+
+        .disclaimer-popup {
+            background-color: white;
+            border-radius: 12px;
+            padding: 24px;
+            max-width: 90%;
+            width: 500px;
+            position: relative;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
+        }
+
+        .disclaimer-popup h2 {
+            color: var(--whatsapp-green);
+            font-size: 20px;
+            margin-bottom: 16px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .disclaimer-content {
+            font-size: 15px;
+            line-height: 1.5;
+            color: #111b21;
+            margin-bottom: 20px;
+        }
+
+        .disclaimer-content p {
+            margin-bottom: 12px;
+        }
+
+        .disclaimer-content ul {
+            list-style: none;
+            padding-left: 0;
+            margin: 12px 0;
+        }
+
+        .disclaimer-content li {
+            padding-left: 24px;
+            position: relative;
+            margin: 8px 0;
+        }
+
+        .disclaimer-content li:before {
+            content: "✓";
+            color: var(--whatsapp-green);
+            position: absolute;
+            left: 0;
+        }
+
+        .close-disclaimer {
+            background-color: var(--whatsapp-green);
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 24px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            width: 100%;
+            transition: background-color 0.2s;
+        }
+
+        .close-disclaimer:hover {
+            background-color: #006d59;
+        }
+
+        @media (max-width: 768px) {
+            .disclaimer-popup {
+                width: 100%;
+                max-height: 90vh;
+                overflow-y: auto;
+                margin: 20px;
+                padding: 20px;
+            }
+
+            .disclaimer-popup h2 {
+                font-size: 18px;
+            }
+
+            .disclaimer-content {
+                font-size: 14px;
+            }
+
+            .close-disclaimer {
+                padding: 10px 20px;
+                font-size: 15px;
+            }
+        }
     </style>
 </head>
 <body>
+    <div class="disclaimer-overlay" id="disclaimerOverlay">
+        <div class="disclaimer-popup">
+            <h2><i class="fas fa-info-circle"></i> Welcome to Babywise Assistant</h2>
+            <div class="disclaimer-content">
+                <p>👋 Hi there! Before we begin, we want to make sure you understand a few important things about our service:</p>
+                <ul>
+                    <li>We provide general parenting guidance and support for everyday questions</li>
+                    <li>Our advice is based on common parenting practices and experiences</li>
+                    <li>We help with routines, feeding schedules, and baby gear recommendations</li>
+                    <li>For any medical concerns, always consult your healthcare provider</li>
+                </ul>
+                <p>Remember: Your baby's health is precious, and medical decisions should always be made with professional medical guidance. We're here to support your parenting journey with practical, everyday advice! 💝</p>
+            </div>
+            <button class="close-disclaimer" id="closeDisclaimer">I Understand, Let's Begin!</button>
+        </div>
+    </div>
     <div class="app-container">
         <div class="chat-header">
             <div class="avatar">
