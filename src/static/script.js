@@ -4,8 +4,6 @@ document.addEventListener('DOMContentLoaded', function() {
     const chatMessages = document.getElementById('chat-messages');
     const submitButton = chatForm.querySelector('button');
     const typingIndicator = document.getElementById('typing-indicator');
-    const disclaimerOverlay = document.getElementById('disclaimerOverlay');
-    const closeDisclaimerButton = document.getElementById('closeDisclaimer');
     const newChatButton = document.getElementById('newChatButton');
     
     let awaitingAnswer = false;
@@ -19,10 +17,9 @@ document.addEventListener('DOMContentLoaded', function() {
         localStorage.setItem('sessionId', sessionId);
     }
 
-    // Clear any existing disclaimer acceptance on page load
+    // Clear any existing session data on new chat
     if (window.location.href.includes('?new')) {
-        sessionStorage.removeItem('disclaimerAccepted');
-        sessionStorage.removeItem('disclaimerShown');
+        sessionStorage.clear();
     }
 
     // Load chat history from localStorage
@@ -374,17 +371,4 @@ document.addEventListener('DOMContentLoaded', function() {
 
     // Hide typing indicator initially
     typingIndicator.style.display = 'none';
-
-    // Show disclaimer if not already accepted
-    if (!sessionStorage.getItem('disclaimerAccepted')) {
-        disclaimerOverlay.style.display = 'flex';
-    } else {
-        disclaimerOverlay.style.display = 'none';
-    }
-
-    // Handle disclaimer close button
-    closeDisclaimerButton.addEventListener('click', function() {
-        sessionStorage.setItem('disclaimerAccepted', 'true');
-        disclaimerOverlay.style.display = 'none';
-    });
 }); 

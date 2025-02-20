@@ -495,72 +495,18 @@
             outline: none;
         }
 
-        /* Add these styles before the closing </style> tag */
-        .disclaimer-overlay {
-            position: fixed;
-            top: 0;
-            left: 0;
-            right: 0;
-            bottom: 0;
-            background: rgba(0, 0, 0, 0.5);
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            z-index: 1000;
-        }
-
-        .disclaimer-popup {
-            background: white;
-            padding: 20px;
-            border-radius: 12px;
-            max-width: 400px;
-            width: 90%;
-            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
-        }
-
-        .disclaimer-popup h2 {
-            color: var(--whatsapp-green);
-            font-size: 16px;
-            margin-bottom: 12px;
-            display: flex;
-            align-items: center;
-            gap: 8px;
-        }
-
-        .disclaimer-content {
-            font-size: 14px;
-            line-height: 1.5;
-            color: #111b21;
-            margin-bottom: 16px;
-        }
-
-        .close-disclaimer {
-            background: var(--whatsapp-green);
-            color: white;
-            border: none;
-            padding: 8px 16px;
-            border-radius: 8px;
-            font-size: 14px;
-            cursor: pointer;
-            width: 100%;
-            transition: background-color 0.2s;
-        }
-
+        /* Remove all disclaimer styles */
+        .disclaimer-overlay,
+        .disclaimer-popup,
+        .disclaimer-popup h2,
+        .disclaimer-content,
+        .close-disclaimer,
         .close-disclaimer:hover {
-            background: #006d59;
+            display: none;
         }
     </style>
 </head>
 <body>
-    <div class="disclaimer-overlay" id="disclaimerOverlay">
-        <div class="disclaimer-popup">
-            <h2><i class="fas fa-info-circle"></i> Important Note</h2>
-            <div class="disclaimer-content">
-                <p>This assistant provides general parenting guidance and support for everyday questions. For any medical concerns, please consult your healthcare provider.</p>
-            </div>
-            <button class="close-disclaimer" id="closeDisclaimer">Got it!</button>
-        </div>
-    </div>
     <div class="app-container">
         <div class="chat-header">
             <div class="avatar">
