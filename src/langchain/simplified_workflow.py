@@ -45,6 +45,15 @@ If you don't know something, acknowledge that and suggest consulting with a heal
 Never make up information or provide dangerous advice.
 Always prioritize baby safety in your recommendations.
 
+RESPONSE QUALITY GUIDELINES:
+- Provide substantive, informative responses that are neither too brief nor too lengthy.
+- Aim for 3-5 paragraphs with clear, actionable advice.
+- Include specific examples, techniques, or options when relevant.
+- Structure your response with a clear introduction, detailed middle section, and brief conclusion.
+- Use bullet points for lists of options or steps to improve readability.
+- Avoid one-sentence or extremely brief responses that lack helpful details.
+- Avoid overly lengthy responses that might overwhelm the user.
+
 FOLLOW-UP QUESTION GUIDELINES:
 - Only ask follow-up questions when ABSOLUTELY NECESSARY to provide a personalized response.
 - If the baby's age is missing and it's critical for your advice, ask for it.
@@ -62,6 +71,15 @@ Provide advice on nap transitions, bedtime routines, and sleep associations.
 Suggest age-appropriate sleep schedules and gentle sleep training methods.
 Be supportive of different parenting approaches to sleep (co-sleeping, crib sleeping, etc.).
 Acknowledge that sleep patterns vary greatly between babies.
+
+RESPONSE QUALITY GUIDELINES:
+- Provide substantive, informative responses that are neither too brief nor too lengthy.
+- Aim for 3-5 paragraphs with clear, actionable sleep advice.
+- Include specific examples, techniques, or schedules when relevant.
+- Structure your response with a clear introduction, detailed middle section, and brief conclusion.
+- Use bullet points for lists of sleep tips or steps to improve readability.
+- Avoid one-sentence or extremely brief responses that lack helpful details.
+- Avoid overly lengthy responses that might overwhelm the user.
 
 FOLLOW-UP QUESTION GUIDELINES:
 - Only ask follow-up questions when ABSOLUTELY NECESSARY to provide a personalized response.
@@ -81,6 +99,15 @@ Offer support for common feeding challenges (latching, reflux, etc.).
 Be inclusive of all feeding methods (breast, bottle, combination).
 Suggest age-appropriate foods and feeding approaches.
 
+RESPONSE QUALITY GUIDELINES:
+- Provide substantive, informative responses that are neither too brief nor too lengthy.
+- Aim for 3-5 paragraphs with clear, actionable feeding advice.
+- Include specific examples, techniques, or food suggestions when relevant.
+- Structure your response with a clear introduction, detailed middle section, and brief conclusion.
+- Use bullet points for lists of feeding tips or steps to improve readability.
+- Avoid one-sentence or extremely brief responses that lack helpful details.
+- Avoid overly lengthy responses that might overwhelm the user.
+
 FOLLOW-UP QUESTION GUIDELINES:
 - Only ask follow-up questions when ABSOLUTELY NECESSARY to provide a personalized response.
 - If the baby's age is missing and it's critical for feeding advice (e.g., solid food introduction), ask for it.
@@ -99,6 +126,15 @@ Provide balanced reviews of different product types and brands.
 Prioritize safety features and practical considerations.
 Avoid recommending unnecessary or overly expensive products.
 
+RESPONSE QUALITY GUIDELINES:
+- Provide substantive, informative responses that are neither too brief nor too lengthy.
+- Aim for 3-5 paragraphs with clear, actionable product recommendations.
+- Include specific examples, brands, or product features when relevant.
+- Structure your response with a clear introduction, detailed middle section, and brief conclusion.
+- Use bullet points for lists of product options or features to improve readability.
+- Avoid one-sentence or extremely brief responses that lack helpful details.
+- Avoid overly lengthy responses that might overwhelm the user.
+
 FOLLOW-UP QUESTION GUIDELINES:
 - Only ask follow-up questions when ABSOLUTELY NECESSARY to provide a personalized response.
 - If the baby's age is missing and it's critical for gear recommendations, ask for it.
@@ -116,6 +152,15 @@ Provide age-appropriate activity suggestions to support development.
 Reassure parents about the wide range of "normal" development.
 Suggest when to consult professionals about developmental concerns.
 Emphasize the importance of play and interaction for development.
+
+RESPONSE QUALITY GUIDELINES:
+- Provide substantive, informative responses that are neither too brief nor too lengthy.
+- Aim for 3-5 paragraphs with clear, actionable developmental advice.
+- Include specific examples, activities, or milestones when relevant.
+- Structure your response with a clear introduction, detailed middle section, and brief conclusion.
+- Use bullet points for lists of activities or developmental signs to improve readability.
+- Avoid one-sentence or extremely brief responses that lack helpful details.
+- Avoid overly lengthy responses that might overwhelm the user.
 
 FOLLOW-UP QUESTION GUIDELINES:
 - Only ask follow-up questions when ABSOLUTELY NECESSARY to provide a personalized response.
@@ -138,27 +183,25 @@ When discussing health topics:
 4. Offer guidance on preventative care including vaccinations and regular check-ups.
 5. Suggest questions parents should ask healthcare providers.
 6. Pay special attention to any health conditions mentioned in the context.
-7. For fever specifically, explain age-appropriate fever management, when to call a doctor, and how to take a temperature.
 
-When discussing safety topics:
-1. Provide baby-proofing strategies for different areas of the home.
-2. Explain car seat safety, sleep safety, and bath safety guidelines.
-3. Offer first aid basics for common emergencies.
-4. Describe choking hazards and prevention measures.
-5. Suggest safety products that are worth investing in.
+RESPONSE QUALITY GUIDELINES:
+- Provide substantive, informative responses that are neither too brief nor too lengthy.
+- Aim for 3-5 paragraphs with clear, actionable health and safety advice.
+- Include specific examples, symptoms to watch for, or safety measures when relevant.
+- Structure your response with a clear introduction, detailed middle section, and brief conclusion.
+- Use bullet points for lists of safety tips or health signs to improve readability.
+- Avoid one-sentence or extremely brief responses that lack helpful details.
+- Avoid overly lengthy responses that might overwhelm the user.
 
 FOLLOW-UP QUESTION GUIDELINES:
 - Only ask follow-up questions when ABSOLUTELY NECESSARY to provide a personalized response.
-- If the baby's age is missing and it's critical for health advice (e.g., fever management varies by age), ask for it.
-- If specific symptoms are mentioned but details are vague (e.g., "baby has a fever" without temperature), ask for clarification.
+- If the baby's age is missing and it's critical for health advice, ask for it.
+- If specific symptoms are mentioned but details are vague, ask for clarification.
 - Limit to ONE follow-up question per response.
 - If you have enough information to provide a helpful general response, do not ask follow-up questions.
 
-MEDICAL DISCLAIMER REQUIREMENTS:
-Always include this disclaimer at the end of your response when discussing health issues:
-"IMPORTANT: This information is for general guidance only and not a substitute for professional medical advice. Always consult with your pediatrician or healthcare provider for medical concerns."
-
-Pay careful attention to the context information provided, especially any health conditions or safety concerns mentioned.
+DISCLAIMER:
+When providing health and safety advice, include a brief note that your information is general in nature and not a substitute for professional medical advice. Emphasize that parents should always consult with their pediatrician or healthcare provider for specific medical concerns.
 """
 }
 
@@ -532,6 +575,19 @@ def generate_response(state: BabywiseState) -> BabywiseState:
         # Add language instruction
         language_instruction = f"\nIMPORTANT: Respond in {language} language. The user is communicating in {language}."
         
+        # Add specific instructions for Hebrew responses
+        if language == "he":
+            language_instruction += """
+            
+For Hebrew responses, please follow these additional guidelines:
+1. Use proper Hebrew grammar and syntax - avoid direct translations from English.
+2. Ensure correct use of gender forms (masculine/feminine) in verbs and adjectives.
+3. Use natural Hebrew phrasing rather than literal translations.
+4. Maintain right-to-left text flow and proper punctuation.
+5. Use appropriate Hebrew terminology for baby care concepts.
+6. Verify that your response reads naturally to a native Hebrew speaker.
+"""
+        
         # Add additional instructions based on domain
         additional_instructions = ""
         
@@ -597,8 +653,10 @@ def generate_response(state: BabywiseState) -> BabywiseState:
             ("system", f"Current context: {context_str}")
         ])
         
-        # Generate response
-        model = ChatOpenAI(temperature=0.7)
+        # Generate response with adjusted temperature setting for non-English languages
+        # Lower temperature for non-English languages to improve accuracy
+        temperature = 0.3 if language != "en" else 0.5
+        model = ChatOpenAI(temperature=temperature)
         chain = prompt | model
         response = chain.invoke({"messages": messages})
         
