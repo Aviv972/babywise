@@ -17,17 +17,38 @@ from fastapi.middleware import Middleware
 from pydantic import BaseModel
 
 from src.langchain.simplified_workflow import chat, get_context, reset_thread
+from src.config.logging_config import setup_logging
 
-# Configure logging
+# Configure logging - VERCEL COMPATIBLE VERSION
+# Check if we're in a read-only environment (like Vercel)
+is_read_only = False
+try:
+    test_file_path = os.path.join(os.getcwd(), '.write_test')
+    with open(test_file_path, 'w') as f:
+        f.write('test')
+    os.remove(test_file_path)
+except (OSError, IOError):
+    is_read_only = True
+    print("Detected read-only filesystem. File logging disabled.")
+
+# Configure basic logging with only console output
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
         logging.StreamHandler(),
-        logging.FileHandler("babywise.log")
+        # IMPORTANT: No FileHandler for Vercel compatibility
     ]
 )
 logger = logging.getLogger(__name__)
+
+# Initialize logging using the config module if available
+try:
+    setup_logging()
+    logger.info("Advanced logging configuration loaded")
+except Exception as e:
+    logger.warning(f"Could not load advanced logging configuration: {str(e)}")
+    logger.info("Using basic console logging only")
 
 # Request logging middleware
 class LoggingMiddleware:
