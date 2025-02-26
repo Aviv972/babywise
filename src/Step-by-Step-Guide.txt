@@ -1,0 +1,213 @@
+# Step-by-Step Guide to SleepAgent Fixes
+
+## Overview
+This guide details the changes made to the SleepAgent class to ensure proper functionality, including initialization, context management, and error handling.
+
+## 1. Proper Initialization
+```python
+def __init__(self, llm_service, session_id: str, db_url: str):
+    # Call parent class initialization first
+    super().__init__(llm_service, session_id, db_url)
+    
+    # Then set agent-specific attributes
+    self.agent_type = AgentTypes.SLEEP_TRAINING
+    self.name = "Sleep Training Specialist"
+    self.expertise = [
+        'sleep', 'nap', 'bedtime', 'night', 'routine', 'schedule',
+        'tired', 'rest', 'שינה', 'לילה', 'שעות'
+    ]
+    self.required_context = ['baby_age', 'current_sleep_schedule']
+```
+
+## 2. Prompt Template Setup
+```python
+self.prompt_template = ChatPromptTemplate.from_messages([
+    ("system", """You are a sleep training specialist focused on helping parents establish healthy sleep routines.
+    Consider these key aspects:
+    1. Age-appropriate sleep needs
+    2. Nap schedule optimization
+    3. Bedtime routine development
+    4. Sleep environment safety
+    Always emphasize safe sleep practices and age-appropriate recommendations."""),
+    ("human", """Query: {query}
+    Baby's Age: {baby_age}
+    Current Schedule: {current_schedule}
+    Additional Context: {context}
+    
+    Please provide:
+    1. Age-appropriate sleep guidance
+    2. Schedule optimization tips
+    3. Safety considerations
+    4. Implementation steps
+    5. Common challenges to watch for""")
+])
+```
+
+## 3. Context Extraction Enhancement
+```python
+def _extract_context_from_history(self) -> Dict[str, Any]:
+    gathered_info = {}
+    messages = self.shared_memory.chat_memory.messages
+    
+    for message in messages:
+        content = message.content.lower()
+        
+        # Extract age information
+        if "month" in content and any(str(i) for i in range(1, 37)):
+            for i in range(1, 37):
+                if f"{i} month" in content:
+                    gathered_info["baby_age"] = {
+                        "value": i,
+                        "unit": "months",
+                        "original": f"{i} months"
+                    }
+                    break
+        
+        # Extract nap information
+        if "nap" in content:
+            gathered_info["nap_schedule"] = content
+            gathered_info["daily_routine"] = {
+                "type": "sleep",
+                "description": content
+            }
+            gathered_info["current_sleep_schedule"] = content
+        
+        # Extract night waking information
+        if "night" in content and ("wake" in content or "waking" in content):
+            gathered_info["night_wakings"] = content
+    
+    return gathered_info
+```
+
+## 4. Query Processing Improvement
+```python
+async def _process_agent_specific(self, query: str, context: Dict[str, Any]) -> Dict[str, Any]:
+    try:
+        # First extract context from the current query
+        new_context = self._extract_context_from_history()
+        if new_context:
+            context[ContextFields.GATHERED_INFO].update(new_context)
+        
+        # Check for missing fields
+        missing_fields = self._get_missing_critical_fields(context)
+        if missing_fields:
+            return {
+                "type": ResponseTypes.QUERY,
+                "text": "To help with your sleep schedule, could you tell me your baby's current sleep routine?",
+                "missing_fields": missing_fields
+            }
+        
+        # Process query with prompt template
+        prompt = self.prompt_template.format(
+            query=query,
+            baby_age=context[ContextFields.GATHERED_INFO].get("baby_age", {}).get("original", "Not specified"),
+            current_schedule=context[ContextFields.GATHERED_INFO].get("current_sleep_schedule", "Not specified"),
+            context=str(context[ContextFields.GATHERED_INFO])
+        )
+        
+        result = await self.llm_service.generate_response(prompt)
+        
+        # Add safety reminder for young babies
+        baby_age = context[ContextFields.GATHERED_INFO].get("baby_age", {}).get("value", 0)
+        if baby_age < 4:
+            result.content += "\n\nIMPORTANT SAFETY NOTE: For babies under 4 months, always place them on their back to sleep, in a bare crib with no blankets, pillows, or toys. Consult your pediatrician for personalized sleep safety guidance."
+        
+        return {
+            "type": ResponseTypes.ANSWER,
+            "text": result.content
+        }
+        
+    except Exception as e:
+        self.logger.error(f"Error in sleep agent processing: {str(e)}")
+        return {
+            "type": ResponseTypes.ERROR,
+            "text": "I'm having trouble processing your sleep-related question. Could you please try rephrasing it?"
+        }
+```
+
+## Error Types Checklist
+
+### 1. Initialization Errors
+- [ ] Missing parent class initialization (`super().__init__()`)
+- [ ] Missing required attributes (agent_type, name, expertise)
+- [ ] Incorrect parameter passing to parent class
+
+### 2. Memory-Related Errors
+- [ ] Missing memory initialization
+- [ ] Memory not properly shared between agents
+- [ ] Context not persisting between messages
+- [ ] Memory components not properly created
+
+### 3. Context Extraction Errors
+- [ ] Failed to extract age information
+- [ ] Failed to extract sleep schedule
+- [ ] Failed to extract nap times
+- [ ] Failed to update context with new information
+
+### 4. LLM Service Errors
+- [ ] Missing prompt template
+- [ ] Failed to generate response
+- [ ] Invalid prompt format
+- [ ] Response parsing errors
+
+### 5. State Management Errors
+- [ ] State not properly updated
+- [ ] State not persisting between messages
+- [ ] Missing critical state fields
+- [ ] State corruption
+
+### 6. Agent Communication Errors
+- [ ] Failed to share context between agents
+- [ ] Incorrect agent type selection
+- [ ] Failed agent transitions
+- [ ] Lost context during transitions
+
+### 7. Data Validation Errors
+- [ ] Missing required fields
+- [ ] Invalid data formats
+- [ ] Inconsistent data types
+- [ ] Data corruption
+
+### 8. Response Formatting Errors
+- [ ] Invalid response type
+- [ ] Missing response fields
+- [ ] Incorrect response structure
+- [ ] Response parsing failures
+
+### 9. Database Errors
+- [ ] Failed database connections
+- [ ] Failed to store/retrieve data
+- [ ] Database corruption
+- [ ] Transaction failures
+
+### 10. System Integration Errors
+- [ ] Failed service initialization
+- [ ] Missing dependencies
+- [ ] Configuration errors
+- [ ] Environment setup issues
+
+## Best Practices for Implementation
+
+1. Always initialize the parent class first using `super().__init__()`
+2. Define clear expertise and required context fields
+3. Implement robust context extraction
+4. Handle exceptions gracefully
+5. Include safety reminders where appropriate
+6. Maintain consistent state management
+7. Validate all required fields before processing
+8. Log errors and important state changes
+9. Use type hints for better code clarity
+10. Follow the single responsibility principle
+
+## Testing Recommendations
+
+1. Test context extraction with various message formats
+2. Verify state persistence across multiple messages
+3. Check error handling for edge cases
+4. Validate safety reminder inclusion
+5. Test agent transitions
+6. Verify memory sharing between agents
+7. Check response formatting
+8. Test with missing required fields
+9. Validate age-specific recommendations
+10. Test multilingual support 

@@ -1,0 +1,290 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Babywise Assistant</title>
+    <link rel="stylesheet" href="style.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
+    <link rel="icon" href="favicon.ico" type="image/x-icon">
+</head>
+<body>
+    <div class="chat-container">
+        <div class="chat-header">
+            <div class="header-left">
+                <img src="data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNDAiIGhlaWdodD0iNDAiIHZpZXdCb3g9IjAgMCA0MCA0MCIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj4KPGNpcmNsZSBjeD0iMjAiIGN5PSIyMCIgcj0iMjAiIGZpbGw9IiNGRkYiLz4KPHBhdGggZD0iTTEyIDIwQzEyIDE1LjU4MTcgMTUuNTgxNyAxMiAyMCAxMkMyNC40MTgzIDEyIDI4IDE1LjU4MTcgMjggMjBDMjggMjQuNDE4MyAyNC40MTgzIDI4IDIwIDI4QzE1LjU4MTcgMjggMTIgMjQuNDE4MyAxMiAyMFoiIGZpbGw9IiMyNUQzNjYiLz4KPHBhdGggZD0iTTE3IDE4QzE3IDE2Ljg5NTQgMTcuODk1NCAxNiAxOSAxNkgyMUMyMi4xMDQ2IDE2IDIzIDE2Ljg5NTQgMjMgMThWMjJDMjMgMjMuMTA0NiAyMi4xMDQ2IDI0IDIxIDI0SDE5QzE3Ljg5NTQgMjQgMTcgMjMuMTA0NiAxNyAyMlYxOFoiIGZpbGw9IiNGRkYiLz4KPC9zdmc+Cg==" alt="Babywise Logo">
+                <div class="header-info">
+                    <h2>Babywise Assistant</h2>
+                    <p>Online</p>
+                </div>
+            </div>
+            <div class="header-actions">
+                <button class="new-chat-button" id="new-chat">
+                    <i class="fas fa-plus"></i>
+                </button>
+            </div>
+        </div>
+        
+        <div class="context-info" id="context-info">
+            <strong>Context Information:</strong>
+            <div id="context-items"></div>
+        </div>
+        
+        <div class="chat-messages" id="chat-messages">
+            <div class="message system-message">
+                Welcome to Babywise Assistant! How can I help you with your baby care questions today?
+            </div>
+            
+            <div class="message bot-message">
+                I'm here to provide personalized advice on sleep, feeding, development, and baby gear. Just ask me anything about your baby's care!
+                <span class="timestamp">8:18 PM</span>
+            </div>
+            
+            <div class="typing-indicator" id="typing-indicator">
+                <span></span>
+                <span></span>
+                <span></span>
+            </div>
+        </div>
+        
+        <div class="chat-input">
+            <input type="text" id="user-input" placeholder="Type your message..." autocomplete="off">
+            <button id="send-button">
+                <i class="fas fa-paper-plane"></i>
+            </button>
+        </div>
+    </div>
+
+    <script>
+        // DOM Elements
+        const chatMessages = document.getElementById('chat-messages');
+        const userInput = document.getElementById('user-input');
+        const sendButton = document.getElementById('send-button');
+        const typingIndicator = document.getElementById('typing-indicator');
+        const newChatButton = document.getElementById('new-chat');
+        const contextInfo = document.getElementById('context-info');
+        const contextItems = document.getElementById('context-items');
+        
+        // Thread ID for conversation tracking
+        let threadId = localStorage.getItem('threadId') || generateThreadId();
+        localStorage.setItem('threadId', threadId);
+        
+        // Language detection function
+        function detectLanguage(text) {
+            // Hebrew characters
+            if (/[\u0590-\u05FF]/.test(text)) {
+                return 'he';
+            }
+            // Arabic characters
+            if (/[\u0600-\u06FF]/.test(text)) {
+                return 'ar';
+            }
+            // Cyrillic (Russian, etc.)
+            if (/[\u0400-\u04FF]/.test(text)) {
+                return 'ru';
+            }
+            // Spanish common characters
+            if (/[áéíóúüñ¿¡]/i.test(text)) {
+                return 'es';
+            }
+            // French common characters
+            if (/[àâçéèêëîïôùûüÿœæ]/i.test(text)) {
+                return 'fr';
+            }
+            // German common characters
+            if (/[äöüßÄÖÜ]/i.test(text)) {
+                return 'de';
+            }
+            // Default to English
+            return 'en';
+        }
+        
+        // Generate a random thread ID
+        function generateThreadId() {
+            return 'thread_' + Math.random().toString(36).substring(2, 15);
+        }
+        
+        // Add a message to the chat
+        function addMessage(message, isUser = false, isSystem = false) {
+            // First remove the typing indicator if it exists in the chat
+            if (typingIndicator.parentNode === chatMessages) {
+                chatMessages.removeChild(typingIndicator);
+            }
+            
+            const messageDiv = document.createElement('div');
+            
+            if (isSystem) {
+                messageDiv.className = 'message system-message';
+            } else if (isUser) {
+                messageDiv.className = 'message user-message';
+                
+                // Check if the message is in a right-to-left language
+                const language = detectLanguage(message);
+                if (language === 'he' || language === 'ar') {
+                    messageDiv.classList.add('rtl');
+                }
+            } else {
+                messageDiv.className = 'message bot-message';
+                
+                // Check if the message is in a right-to-left language
+                const language = detectLanguage(message);
+                if (language === 'he' || language === 'ar') {
+                    messageDiv.classList.add('rtl');
+                }
+            }
+            
+            // Create message content
+            const messageContent = document.createElement('span');
+            messageContent.innerHTML = message;
+            messageDiv.appendChild(messageContent);
+            
+            // Add timestamp
+            if (!isSystem) {
+                const timestamp = document.createElement('span');
+                timestamp.className = 'timestamp';
+                const now = new Date();
+                timestamp.textContent = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                messageDiv.appendChild(timestamp);
+            }
+            
+            chatMessages.appendChild(messageDiv);
+            
+            // Re-append the typing indicator to ensure it's at the end
+            chatMessages.appendChild(typingIndicator);
+            
+            chatMessages.scrollTop = chatMessages.scrollHeight;
+        }
+        
+        // Show typing indicator
+        function showTypingIndicator() {
+            // First remove the typing indicator from its current position
+            if (typingIndicator.parentNode) {
+                typingIndicator.parentNode.removeChild(typingIndicator);
+            }
+            
+            // Then append it to the end of the chat messages container
+            chatMessages.appendChild(typingIndicator);
+            
+            // Now display it
+            typingIndicator.style.display = 'flex';
+            chatMessages.scrollTop = chatMessages.scrollHeight;
+        }
+        
+        // Hide typing indicator
+        function hideTypingIndicator() {
+            typingIndicator.style.display = 'none';
+        }
+        
+        // Update context information
+        function updateContextInfo(context) {
+            // We're hiding context info as requested
+            contextInfo.style.display = 'none';
+            // Skip processing context data since we're not displaying it
+            return;
+        }
+        
+        // Send a message to the API
+        async function sendMessage() {
+            const message = userInput.value.trim();
+            if (!message) return;
+            
+            // Add user message to chat
+            addMessage(message, true);
+            userInput.value = '';
+            
+            // Detect language
+            const language = detectLanguage(message);
+            
+            // Show typing indicator
+            showTypingIndicator();
+            
+            try {
+                const response = await fetch('/chat', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        message: message,
+                        thread_id: threadId,
+                        language: language
+                    })
+                });
+                
+                if (!response.ok) {
+                    throw new Error('Network response was not ok');
+                }
+                
+                const data = await response.json();
+                
+                // Hide typing indicator
+                hideTypingIndicator();
+                
+                // Add bot response to chat
+                addMessage(data.text, false);
+                
+                // Update context information if available
+                if (data.context) {
+                    updateContextInfo(data.context);
+                }
+                
+            } catch (error) {
+                console.error('Error:', error);
+                hideTypingIndicator();
+                addMessage('Sorry, there was an error processing your request. Please try again.', false);
+            }
+        }
+        
+        // Reset the chat
+        function resetChat() {
+            // Generate a new thread ID
+            threadId = generateThreadId();
+            localStorage.setItem('threadId', threadId);
+            
+            // Clear chat messages except for the welcome message
+            chatMessages.innerHTML = '';
+            
+            // Add welcome message
+            addMessage('Welcome to Babywise Assistant! How can I help you with your baby care questions today?', false, true);
+            addMessage('I\'m here to provide personalized advice on sleep, feeding, development, and baby gear. Just ask me anything about your baby\'s care!', false);
+            
+            // Add typing indicator back to the chat messages
+            chatMessages.appendChild(typingIndicator);
+            
+            // Clear context info (keeping this hidden)
+            contextInfo.style.display = 'none';
+        }
+        
+        // Check for context from server periodically
+        async function checkContext() {
+            try {
+                const response = await fetch(`/context/${threadId}`);
+                if (!response.ok) return;
+                
+                const data = await response.json();
+                if (data.context) {
+                    updateContextInfo(data.context);
+                }
+            } catch (error) {
+                console.error('Error checking context:', error);
+            }
+        }
+        
+        // Event listeners
+        sendButton.addEventListener('click', sendMessage);
+        userInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+                sendMessage();
+            }
+        });
+        
+        newChatButton.addEventListener('click', resetChat);
+        
+        // Check context every 30 seconds
+        setInterval(checkContext, 30000);
+        
+        // Initial context check
+        checkContext();
+    </script>
+</body>
+</html> 

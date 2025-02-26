@@ -1,0 +1,253 @@
+Babywise Chatbot: System Overview and Guidelines
+
+Provide Personalized Baby-Care Insights
+Tailor responses to each family’s unique context and preferences.
+Support Multi-Domain Expertise
+Offer guidance on a range of topics, from baby gear to sleep routines.
+Maintain Continuity & Context
+Leverage conversation memory so users don’t have to repeat themselves.
+Ensure User-Friendly Experience
+Keep interactions natural, with easy-to-understand answers and follow-up questions.
+Respect Privacy & Security
+Safeguard sensitive details and remove personally identifiable information as needed.
+These goals drive every aspect of design, from multi-agent architecture to WhatsApp-like UI styling, ensuring the chatbot delivers consistent and meaningful interactions for caregivers.
+
+1. Architecture & Key Concepts
+Multi-Agent Architecture
+
+Specialized Agents: Each agent (e.g., Sleep, Baby Gear) handles queries within its domain.
+LLM Integration: Uses language models (via LangChain) for text generation.
+Shared Context: Retains multi-turn conversation history, crucial for “chatbot-like” interactions.
+LangChain + LangGraph Memory
+
+High-Level Strategy
+Initial Query + Hard-Coded Extraction
+
+Use a deterministic function to parse the user’s message and decide which agent handles the query.
+This ensures the system doesn’t rely on the LLM’s guesswork for agent selection.
+Agent-Specific Processing + Dynamic Follow-Up
+
+Agent receives the query and conversation history (so the LLM can see the bigger context).
+Each agent has a small “required fields” checklist. If missing info (e.g., baby’s age for feeding advice), the agent’s prompt instructs the LLM to ask a single follow-up question.
+This approach forces the LLM to gather needed data instead of guessing.
+Rule-Based Validations
+
+Before calling the LLM, each agent checks any domain constraints:
+For instance, a feeding routine must know baby age; if missing, the system triggers a clarifying question.
+Validate final LLM output against these domain constraints (if the LLM suggests something outside known safe ranges, reject or correct it).
+LLM Call + Context Merging
+
+Pass the conversation history and agent instructions to the LLM.
+Include explicit instructions like “If the baby’s age is unknown, ask for it. Do not guess or fabricate details.”
+Use post-processing to remove extraneous or hallucinated content.
+Response Assembly
+
+Combine LLM output with your own rule-based info (e.g., known product details, safe feeding ranges).
+Format the final response in a single JSON/object structure for consistent delivery back to the user.
+
+System Flow 
+Query Reception (Step 1)
+
+chat() receives the query.
+Validate and create/retrieve session.
+Session Management (Step 2)
+
+process_message() stores the original query.
+Update conversation context with minimal domain-agnostic rules (logging, etc.).
+Agent Selection (Step 3)
+
+get_agent_for_query() uses hard-coded extraction to classify the query.
+Return the chosen agent (e.g., SleepAgent).
+Agent Processing (Step 4)
+
+Context Validation: Check for must-have fields (like baby age).
+If missing, instruct the LLM to ask a clarifying question.
+If sufficient, proceed to LLM processing.
+LLM Processing (Step 5)
+
+generate_response() merges conversation history + agent instructions.
+Remind the LLM “Do not guess any missing data—request it.”
+(Optional) Perform a rule-based check or post-processing to filter out known “hallucinated” or out-of-scope data.
+Response Assembly (Step 6)
+
+If clarifications needed, return a follow-up question.
+Otherwise, deliver the final answer, ensuring consistent JSON format.
+
+###Code examples:###
+
+The user submits a query; store it (do not overwrite).
+Extract keywords and intent.
+Agent Selection & Routing
+
+Match the query to the correct agent (e.g., “baby_gear_agent”) based on domain.
+Maintain a unified conversation_state or use LangGraph to load prior messages.
+Context-Aware Processing
+
+The agent checks all conversation history plus any relevant domain data in gathered_info.
+If data is missing, ask clarifying questions; if sufficient, generate a direct response.
+Dynamic Response Generation
+
+Prompt the LLM with the entire context: original query, conversation history, and domain-specific instructions.
+If context is incomplete, produce a follow-up question.
+3. Context & Memory Management
+3.1 Single Source of Truth (Optional / In-code)
+
+self.conversation_state = {
+    "original_query": None,
+    "gathered_info": {},
+    "conversation_history": [],
+    "context_relevance": {},
+    "agent_type": None
+}
+Never overwrite original_query.
+Append new turns to conversation_history.
+Merge clarifications into gathered_info.
+3.2 Using LangGraph Persistence
+3.2.1 Basic Setup
+Install Packages
+
+import os
+import getpass
+
+os.environ["LANGSMITH_TRACING"] = "true"
+os.environ["LANGSMITH_API_KEY"] = getpass.getpass()
+Initialize a Chat Model
+
+
+from langchain.chat_models import init_chat_model
+model = init_chat_model("llama3-8b-8192", model_provider="groq")
+3.2.2 Creating a Minimal Chatbot Application
+
+from langgraph.checkpoint.memory import MemorySaver
+from langgraph.graph import START, MessagesState, StateGraph
+from langchain_core.messages import HumanMessage, AIMessage
+
+# 1. Define your graph schema
+workflow = StateGraph(state_schema=MessagesState)
+
+# 2. Node function that calls the LLM
+def call_model(state: MessagesState):
+    # 'state["messages"]' is a list of all messages so far
+    response = model.invoke(state["messages"])
+    return {"messages": response}
+
+# 3. Add the single node to the graph
+workflow.add_edge(START, "model")
+workflow.add_node("model", call_model)
+
+# 4. Initialize memory
+memory = MemorySaver()
+app = workflow.compile(checkpointer=memory)
+thread_id: Identifies separate conversation threads/users.
+python
+Copy
+Edit
+config = {"configurable": {"thread_id": "user123"}}
+
+# 5. Provide user messages
+input_messages = [HumanMessage(content="Hi! I'm Bob.")]
+output = app.invoke({"messages": input_messages}, config)
+# The state now has a memory of "Bob"
+
+# 6. Follow-up
+second_query = [HumanMessage(content="What's my name?")]
+output = app.invoke({"messages": second_query}, config)
+# The chatbot should remember 'Bob'
+3.3 Prompt Templates & System Messages
+System Instructions: Provide a “role=system” style message to shape the AI’s responses.
+MessagesPlaceholder: Insert full conversation history into the final prompt.
+Example:
+
+
+from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
+prompt_template = ChatPromptTemplate.from_messages([
+    ("system", "You talk like a pirate."),
+    MessagesPlaceholder(variable_name="messages"),
+])
+Then integrate this into the graph node:
+
+
+def call_model(state: MessagesState):
+    prompt = prompt_template.invoke(state)
+    response = model.invoke(prompt)
+    return {"messages": response}
+3.4 Handling Additional Inputs
+You can store extra fields (e.g., user language) in state.
+If a field is omitted on subsequent queries, the previously stored value persists.
+3.5 Conversation History Trimming
+Use trim_messages to avoid exceeding the LLM’s context window.
+Typically done after retrieving from memory but before passing to the prompt.
+Example:
+
+from langchain_core.messages import trim_messages
+
+trimmer = trim_messages(max_tokens=100, strategy="last", token_counter=model)
+def call_model(state: State):
+    trimmed = trimmer.invoke(state["messages"])
+    prompt = prompt_template.invoke({"messages": trimmed, "language": state["language"]})
+    response = model.invoke(prompt)
+    return {"messages": [response]}
+3.6 Streaming
+To stream tokens (for better UX), invoke with stream_mode="messages":
+
+for chunk, meta in app.stream({"messages": input_messages}, config, stream_mode="messages"):
+    if isinstance(chunk, AIMessage):
+        print(chunk.content, end="")
+
+4. Agent-Specific Guidelines
+Each domain agent defines critical_fields (e.g., baby_age for Sleep).
+Validates these fields before producing a conclusive answer.
+Focuses strictly on domain content; do not overlap with other agents.
+
+5. Response Quality
+Address the original query directly.
+Integrate all relevant context from memory.
+Maintain conversational tone.
+Provide actionable or clarifying info.
+Same language as the user.
+
+6. Error Handling & Edge Cases
+Context Conflicts: If contradictory info arises, ask clarifying questions.
+Partial or Missing Info: Prompt for details (budget, baby’s age, etc.).
+API Errors: Catch invalid keys, timeouts, or other exceptions.
+Multiple Topics: Break them down or ask user to clarify.
+Memory Overflows: Use trimming or chunking to manage large conversations.
+
+
+7. Design & UI (WhatsApp-Like)
+Container: 700px max width (desktop), full width (mobile).
+Background: Light beige #E5DDD5; optional subtle texture.
+Message Bubbles:
+User: Right-aligned, light green #DCF8C6.
+Agent: Left-aligned, white #FFFFFF.
+Timestamps: Tiny, gray, inside bubble.
+Typing Indicator: Three-dot fade animation for the agent.
+Input Field: White, rounded corners, no border.
+Responsive CSS: Media queries for mobile/tablet/desktop layouts.
+
+8. Example Walkthrough
+Below is a short example demonstrating how a user might chat with Babywise Chatbot about a stroller:
+
+from langchain_core.messages import HumanMessage
+
+thread_id = "stroller_user_789"
+config = {"configurable": {"thread_id": thread_id}}
+
+# First user message
+user_message = HumanMessage(content="Hi, I'm looking for a lightweight stroller under $300.")
+output = app.invoke({"messages": [user_message]}, config)
+print(output["messages"][-1].content)
+
+# Follow-up
+second_message = HumanMessage(content="What's my budget again?")
+output = app.invoke({"messages": [second_message]}, config)
+print(output["messages"][-1].content)
+If you check memory (via LangGraph’s MemorySaver), the entire conversation—including domain info and clarifications—stays linked to thread_id = "stroller_user_789".
+
+9. Next Steps
+Conversational RAG: Build a chat experience that references an external knowledge base.
+Agents: Extend to an agent that can “take actions” (e.g., call an API).
+Advanced Memory: Explore partial context retrieval, chunking, or vector-based search.
+Streaming: Provide incremental token responses for better user experience.
+Short Opinion & Summary
+Using LangChain with LangGraph ensures robust, multi-turn conversation memory while simplifying the underlying code. The recommended approach in v0.3—wrapping your LLM logic in a minimal StateGraph and using a MemorySaver checkpointer—lets you easily persist conversation threads, incorporate system instructions, handle additional parameters like language, trim older messages, and even stream tokens. Combine these steps with a responsive, WhatsApp-like UI for an engaging user experience.
