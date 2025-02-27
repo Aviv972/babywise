@@ -3,9 +3,8 @@ import logging.handlers
 import os
 from datetime import datetime
 
-# Create logs directory if it doesn't exist
+# Define logs directory path
 LOGS_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 'logs')
-os.makedirs(LOGS_DIR, exist_ok=True)
 
 # Configure logging format
 LOG_FORMAT = '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
@@ -38,6 +37,9 @@ def setup_logging():
         with open(test_file_path, 'w') as f:
             f.write('test')
         os.remove(test_file_path)
+        
+        # Only create logs directory if we're not in a read-only environment
+        os.makedirs(LOGS_DIR, exist_ok=True)
     except (OSError, IOError):
         is_read_only = True
         logging.warning("Detected read-only filesystem. File logging disabled.")
