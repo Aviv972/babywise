@@ -17,11 +17,18 @@ from fastapi.middleware import Middleware
 from pydantic import BaseModel
 
 from src.langchain.simplified_workflow import chat, get_context, reset_thread
-from src.config.logging_config import setup_logging
+
+# Try to import the logging config, but don't fail if it's not available
+try:
+    from src.config.logging_config import setup_logging
+    has_logging_config = True
+except ImportError:
+    has_logging_config = False
+    print("Warning: Could not import logging_config. Using basic logging configuration.")
 
 # Configure logging - VERCEL COMPATIBLE VERSION
 # Check if we're in a read-only environment (like Vercel)
-is_read_only = False
+is_read_only = True
 try:
     test_file_path = os.path.join(os.getcwd(), '.write_test')
     with open(test_file_path, 'w') as f:
@@ -43,12 +50,15 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Initialize logging using the config module if available
-try:
-    setup_logging()
-    logger.info("Advanced logging configuration loaded")
-except Exception as e:
-    logger.warning(f"Could not load advanced logging configuration: {str(e)}")
-    logger.info("Using basic console logging only")
+if has_logging_config:
+    try:
+        setup_logging()
+        logger.info("Advanced logging configuration loaded")
+    except Exception as e:
+        logger.warning(f"Could not load advanced logging configuration: {str(e)}")
+        logger.info("Using basic console logging only")
+else:
+    logger.info("Advanced logging configuration not available. Using basic console logging only.")
 
 # Request logging middleware
 class LoggingMiddleware:
