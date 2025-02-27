@@ -263,12 +263,53 @@ CONTEXT_PATTERNS = {
 
 # Node functions
 def extract_context(state: BabywiseState) -> BabywiseState:
-    """Extract context from messages and update state"""
-    messages = state["messages"]
-    context = state.get("context", {})
-    extracted_entities = state.get("extracted_entities", set())
-    
+    """Extract context from the conversation history"""
     try:
+        messages = state["messages"]
+        context = state.get("context", {})
+        extracted_entities = state.get("extracted_entities", set())
+        
+        # If no messages, return unchanged state
+        if not messages:
+            return state
+        
+        # Get the latest message
+        latest_msg = messages[-1]
+        if not isinstance(latest_msg, HumanMessage):
+            return state
+        
+        content = latest_msg.content.lower()
+        
+        # Detect language
+        language = "en"  # Default to English
+        
+        # Check for Hebrew characters
+        if re.search(r'[\u0590-\u05FF]', content):
+            language = "he"
+            
+            # Check for Hebrew breastfeeding/maternal terms
+            hebrew_breastfeeding_terms = ["הנקה", "להניק", "מניקה", "חלב אם", "שאיבה", "שד", "פטמה"]
+            hebrew_maternal_terms = ["לידה", "הריון", "קיסרי", "אמא", "אימא", "אחרי לידה"]
+            
+            # Set female context if breastfeeding or maternal terms are found
+            if any(term in content for term in hebrew_breastfeeding_terms + hebrew_maternal_terms):
+                if "user_context" not in state:
+                    state["user_context"] = {}
+                state["user_context"]["is_female_context"] = True
+                
+                if any(term in content for term in hebrew_breastfeeding_terms):
+                    state["user_context"]["is_breastfeeding_context"] = True
+                    
+                if any(term in content for term in hebrew_maternal_terms):
+                    state["user_context"]["is_maternal_context"] = True
+        
+        # Check for Arabic characters
+        elif re.search(r'[\u0600-\u06FF]', content):
+            language = "ar"
+        
+        # Store language in state
+        state["language"] = language
+        
         # Process messages to extract context
         for msg in messages:
             if isinstance(msg, HumanMessage):
@@ -445,6 +486,15 @@ def select_domain(state: BabywiseState) -> BabywiseState:
         feeding_keywords = ["feed", "eat", "milk", "formula", "breast", "bottle", "nursing",
                            "solids", "puree", "spoon", "hunger", "appetite", "burp"]
         
+        # Add specific breastfeeding keywords that indicate female user context
+        breastfeeding_keywords = ["breastfeed", "breastfeeding", "breast milk", "lactation", "pump", "pumping", 
+                                 "latch", "latching", "nipple", "let-down", "milk supply", "nursing", "nurse",
+                                 "הנקה", "להניק", "חלב אם", "שאיבה", "שד", "פטמה"]
+        
+        maternal_keywords = ["postpartum", "c-section", "cesarean", "birth", "labor", "delivery", "pregnancy",
+                            "pregnant", "trimester", "mother", "mom", "maternal", "maternity", "לידה", "הריון", 
+                            "קיסרי", "אמא", "אימא", "אחרי לידה"]
+        
         gear_keywords = ["stroller", "crib", "car seat", "carrier", "toy", "product", "gear",
                         "monitor", "diaper", "clothes", "swing", "bouncer", "playmat"]
         
@@ -466,6 +516,24 @@ def select_domain(state: BabywiseState) -> BabywiseState:
         # Count keyword matches for each domain
         sleep_count = sum(1 for word in sleep_keywords if word in latest_msg)
         feeding_count = sum(1 for word in feeding_keywords if word in latest_msg)
+        
+        # Add breastfeeding and maternal keyword counts
+        breastfeeding_count = sum(2 for word in breastfeeding_keywords if word in latest_msg)  # Double weight
+        maternal_count = sum(2 for word in maternal_keywords if word in latest_msg)  # Double weight
+        
+        # Add breastfeeding count to feeding count
+        feeding_count += breastfeeding_count
+        
+        # Store breastfeeding and maternal context for gender handling in Hebrew
+        if breastfeeding_count > 0 or maternal_count > 0:
+            if "user_context" not in state:
+                state["user_context"] = {}
+            state["user_context"]["is_female_context"] = True
+            if breastfeeding_count > 0:
+                state["user_context"]["is_breastfeeding_context"] = True
+            if maternal_count > 0:
+                state["user_context"]["is_maternal_context"] = True
+        
         gear_count = sum(1 for word in gear_keywords if word in latest_msg)
         development_count = sum(1 for word in development_keywords if word in latest_msg)
         
@@ -577,16 +645,65 @@ def generate_response(state: BabywiseState) -> BabywiseState:
         
         # Add specific instructions for Hebrew responses
         if language == "he":
+            # Check for female context indicators
+            is_female_context = False
+            is_breastfeeding_context = False
+            is_maternal_context = False
+            
+            # Check if we have user context information
+            if "user_context" in state:
+                is_female_context = state["user_context"].get("is_female_context", False)
+                is_breastfeeding_context = state["user_context"].get("is_breastfeeding_context", False)
+                is_maternal_context = state["user_context"].get("is_maternal_context", False)
+            
+            # Check if the domain is related to breastfeeding or maternal topics
+            if domain == "feeding" and any(term in context_str.lower() for term in ["breast", "nursing", "הנקה", "חלב אם"]):
+                is_female_context = True
+                is_breastfeeding_context = True
+            
+            # Add gender-specific instructions
+            gender_instruction = ""
+            if is_female_context:
+                gender_instruction = """
+IMPORTANT: This is a female user. Use feminine forms in Hebrew:
+- Address the user as 'את' (not 'אתה')
+- Use feminine verb forms (e.g., 'את צריכה' not 'אתה צריך')
+- Use feminine possessive forms (e.g., 'שלך' with feminine conjugation)
+- Use feminine adjectives when referring to the user
+"""
+                if is_breastfeeding_context:
+                    gender_instruction += """
+This is specifically about breastfeeding. Use appropriate feminine terminology:
+- 'כשאת מניקה' (when you breastfeed)
+- 'חלב האם שלך' (your breast milk)
+- 'השד שלך' (your breast)
+"""
+                if is_maternal_context:
+                    gender_instruction += """
+This is about maternal/pregnancy topics. Use appropriate feminine terminology:
+- 'ההיריון שלך' (your pregnancy)
+- 'הלידה שלך' (your delivery)
+- 'הגוף שלך' (your body)
+"""
+            
             language_instruction += """
             
 For Hebrew responses, please follow these additional guidelines:
 1. Use proper Hebrew grammar and syntax - avoid direct translations from English.
 2. Ensure correct use of gender forms (masculine/feminine) in verbs and adjectives.
+   - For breastfeeding, pregnancy, or postpartum topics, ALWAYS use feminine forms (את, שלך, etc.)
+   - For general parenting topics, use feminine forms by default unless context clearly indicates a male user
+   - Use gender-appropriate verb conjugations (e.g., "את צריכה" not "אתה צריך" for female users)
 3. Use natural Hebrew phrasing rather than literal translations.
 4. Maintain right-to-left text flow and proper punctuation.
 5. Use appropriate Hebrew terminology for baby care concepts.
 6. Verify that your response reads naturally to a native Hebrew speaker.
+7. Address the user directly in second person (את/אתה) rather than using impersonal forms.
 """
+            
+            # Add the gender-specific instruction if applicable
+            if gender_instruction:
+                language_instruction += gender_instruction
         
         # Add additional instructions based on domain
         additional_instructions = ""
