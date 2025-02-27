@@ -4,11 +4,11 @@
     --chat-bg-color: #000000;
     --user-bubble: #DCF8C6;
     --bot-bubble: #FFFFFF;
-    --header-bg: #075E54;
+    --header-bg: #3D8C6F;
     --header-text: #FFFFFF;
     --input-bg: #FFFFFF;
     --input-border: #D0D0D0;
-    --send-button: #25D366;
+    --send-button: #3D8C6F;
     --timestamp: #999999;
     --shadow: rgba(0, 0, 0, 0.1);
     --whatsapp-bg: #E5DDD5;
@@ -68,7 +68,8 @@ body {
     height: 40px;
     border-radius: 50%;
     margin-right: 10px;
-    object-fit: cover;
+    object-fit: contain;
+    background-color: white;
 }
 
 .chat-header .header-info h2 {
