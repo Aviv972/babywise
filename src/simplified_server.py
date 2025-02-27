@@ -16,29 +16,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware import Middleware
 from pydantic import BaseModel
 
-from src.langchain.simplified_workflow import chat, get_context, reset_thread
-
-# Try to import the logging config, but don't fail if it's not available
-try:
-    from src.config.logging_config import setup_logging
-    has_logging_config = True
-except ImportError:
-    has_logging_config = False
-    print("Warning: Could not import logging_config. Using basic logging configuration.")
-
-# Configure logging - VERCEL COMPATIBLE VERSION
-# Check if we're in a read-only environment (like Vercel)
-is_read_only = True
-try:
-    test_file_path = os.path.join(os.getcwd(), '.write_test')
-    with open(test_file_path, 'w') as f:
-        f.write('test')
-    os.remove(test_file_path)
-except (OSError, IOError):
-    is_read_only = True
-    print("Detected read-only filesystem. File logging disabled.")
-
-# Configure basic logging with only console output
+# Configure basic logging first (will be overridden if advanced config is available)
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -49,8 +27,43 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Initialize logging using the config module if available
-if has_logging_config:
+# Check if we're in a read-only environment (like Vercel) before importing anything else
+is_read_only = False
+try:
+    test_file_path = os.path.join(os.getcwd(), '.write_test')
+    with open(test_file_path, 'w') as f:
+        f.write('test')
+    os.remove(test_file_path)
+    logger.info("Filesystem is writable")
+except (OSError, IOError) as e:
+    is_read_only = True
+    logger.warning(f"Detected read-only filesystem: {str(e)}")
+    logger.warning("File logging will be disabled")
+
+# Now import the rest of the modules
+try:
+    from src.langchain.simplified_workflow import chat, get_context, reset_thread
+    logger.info("Successfully imported workflow modules")
+except Exception as e:
+    logger.error(f"Error importing workflow modules: {str(e)}")
+    raise
+
+# Try to import the logging config, but don't fail if it's not available
+if not is_read_only:
+    try:
+        from src.config.logging_config import setup_logging
+        has_logging_config = True
+        logger.info("Logging configuration module imported")
+    except ImportError as e:
+        has_logging_config = False
+        logger.warning(f"Could not import logging_config: {str(e)}")
+        logger.warning("Using basic logging configuration")
+else:
+    has_logging_config = False
+    logger.warning("Skipping advanced logging setup due to read-only filesystem")
+
+# Initialize logging using the config module if available and not in read-only mode
+if has_logging_config and not is_read_only:
     try:
         setup_logging()
         logger.info("Advanced logging configuration loaded")
@@ -58,7 +71,7 @@ if has_logging_config:
         logger.warning(f"Could not load advanced logging configuration: {str(e)}")
         logger.info("Using basic console logging only")
 else:
-    logger.info("Advanced logging configuration not available. Using basic console logging only.")
+    logger.info("Using basic console logging only")
 
 # Request logging middleware
 class LoggingMiddleware:
