@@ -3,4 +3,5 @@ pydantic==1.10.13
 typing_extensions==4.7.1
 uvicorn[standard]==0.22.0
 langchain==0.0.194
-langgraph==0.0.38 
+langgraph==0.0.38
+langchain-openai==0.0.1 

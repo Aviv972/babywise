@@ -82,124 +82,52 @@ def diagnose_forward_ref_classes() -> Dict[str, Any]:
         logger.error(f"Error diagnosing ForwardRef classes: {str(e)}")
         return {"error": str(e)}
 
-def apply_pydantic_typing_patch() -> bool:
+def apply_direct_pydantic_patch() -> bool:
     """
-    Apply patch for pydantic.typing.evaluate_forwardref to handle the 'recursive_guard' parameter.
+    Apply a direct patch to pydantic.typing.evaluate_forwardref.
     
-    This fixes compatibility issues between newer Python versions and older Pydantic versions.
+    This completely replaces the function with a custom implementation that
+    handles the recursive_guard parameter correctly.
     
     Returns:
         bool: True if patch was applied successfully, False otherwise
     """
     try:
-        logger.info("Attempting to patch pydantic.typing.evaluate_forwardref")
+        logger.info("Applying direct patch to pydantic.typing.evaluate_forwardref")
         
         # Import pydantic.typing
         import pydantic.typing
+        from typing import cast, Any, ForwardRef
         
-        # Get the original evaluate_forwardref function
-        original_evaluate_forwardref = pydantic.typing.evaluate_forwardref
-        
-        # Define a patched version
-        def patched_evaluate_forwardref(type_, globalns, localns):
+        # Define a completely new implementation
+        def safe_evaluate_forwardref(type_, globalns, localns):
             """
-            Patched version of evaluate_forwardref that handles the recursive_guard parameter.
+            Safe implementation of evaluate_forwardref that handles the recursive_guard parameter.
             
-            This function intercepts calls to ForwardRef._evaluate and adds the recursive_guard
-            parameter if it's missing.
+            This is a complete replacement for pydantic.typing.evaluate_forwardref that
+            works with both older and newer versions of Python.
             """
-            # Get the original _evaluate method
-            original_evaluate = type_._evaluate
+            logger.debug(f"Safe evaluate_forwardref called for {type_}")
             
-            # Check if it needs patching (doesn't have recursive_guard parameter)
             try:
-                signature = inspect.signature(original_evaluate)
-                if "recursive_guard" not in signature.parameters:
-                    logger.info("Patching ForwardRef._evaluate method")
-                    
-                    # Define a patched _evaluate method
-                    def patched_evaluate(self, globalns, localns, recursive_guard=None):
-                        if recursive_guard is None:
-                            recursive_guard = set()
-                        return original_evaluate(self, globalns, localns)
-                    
-                    # Replace the _evaluate method
-                    type_.__class__._evaluate = patched_evaluate
-            except Exception as e:
-                logger.error(f"Error checking/patching _evaluate method: {str(e)}")
-            
-            # Call the original function with the potentially patched _evaluate method
-            try:
-                return original_evaluate_forwardref(type_, globalns, localns)
+                # Try to call _evaluate with recursive_guard as a keyword argument
+                return cast(Any, type_)._evaluate(globalns, localns, recursive_guard=set())
             except TypeError as e:
-                # If we still get a TypeError about recursive_guard, try to handle it directly
-                if "recursive_guard" in str(e):
-                    logger.warning(f"Caught TypeError: {str(e)}, attempting direct call with keyword argument")
-                    # Try to call _evaluate directly with the recursive_guard parameter as a keyword argument
-                    return type_._evaluate(globalns, localns, recursive_guard=set())
+                if "unexpected keyword argument" in str(e):
+                    # If recursive_guard is not accepted as a keyword, try without it
+                    logger.debug("Falling back to _evaluate without recursive_guard")
+                    return cast(Any, type_)._evaluate(globalns, localns)
                 else:
                     # Re-raise other TypeErrors
                     raise
         
-        # Replace the evaluate_forwardref function
-        pydantic.typing.evaluate_forwardref = patched_evaluate_forwardref
-        logger.info("Successfully patched pydantic.typing.evaluate_forwardref")
+        # Replace the function
+        pydantic.typing.evaluate_forwardref = safe_evaluate_forwardref
+        logger.info("Successfully applied direct patch to pydantic.typing.evaluate_forwardref")
         return True
         
     except Exception as e:
-        logger.error(f"Failed to patch pydantic.typing: {str(e)}")
-        return False
-
-def apply_forward_ref_patch() -> bool:
-    """
-    Apply patch for ForwardRef._evaluate to handle the 'recursive_guard' parameter.
-    
-    This fixes compatibility issues between newer Python versions and older Pydantic versions.
-    
-    Returns:
-        bool: True if patch was applied successfully, False otherwise
-    """
-    try:
-        logger.info("Checking if ForwardRef._evaluate needs patching")
-        
-        # Get the original _evaluate method
-        original_evaluate = getattr(ForwardRef, "_evaluate", None)
-        
-        # Check if the method exists and needs patching
-        if original_evaluate is None:
-            logger.warning("ForwardRef._evaluate method not found")
-            return False
-            
-        # Check if the method already has the recursive_guard parameter
-        signature = inspect.signature(original_evaluate)
-        if "recursive_guard" in signature.parameters:
-            logger.info("ForwardRef._evaluate already has recursive_guard parameter, no patching needed")
-            return True
-            
-        # Define the patched method
-        def patched_evaluate(self, globalns, localns, recursive_guard=None):
-            """
-            Patched version of ForwardRef._evaluate that handles the recursive_guard parameter.
-            
-            Args:
-                globalns: Global namespace
-                localns: Local namespace
-                recursive_guard: Set of seen ForwardRefs (default: None)
-                
-            Returns:
-                The evaluated type
-            """
-            if recursive_guard is None:
-                recursive_guard = set()
-            return original_evaluate(self, globalns, localns)
-        
-        # Apply the patch
-        ForwardRef._evaluate = patched_evaluate
-        logger.info("Successfully patched ForwardRef._evaluate")
-        return True
-        
-    except Exception as e:
-        logger.error(f"Failed to patch ForwardRef._evaluate: {str(e)}")
+        logger.error(f"Failed to apply direct pydantic patch: {str(e)}")
         return False
 
 def apply_all_patches() -> Dict[str, bool]:
@@ -215,11 +143,8 @@ def apply_all_patches() -> Dict[str, bool]:
     diagnostics = diagnose_forward_ref_classes()
     logger.info(f"ForwardRef diagnostics: {diagnostics}")
     
-    # Apply ForwardRef patch
-    results["forward_ref_patch"] = apply_forward_ref_patch()
-    
-    # Apply pydantic.typing patch
-    results["pydantic_typing_patch"] = apply_pydantic_typing_patch()
+    # Apply direct pydantic patch
+    results["direct_pydantic_patch"] = apply_direct_pydantic_patch()
     
     # Log overall results
     success_count = sum(1 for success in results.values() if success)
