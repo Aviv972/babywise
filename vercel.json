@@ -18,11 +18,7 @@
     ],
     "env": {
         "PYTHONPATH": ".",
-<<<<<<< HEAD
         "PYTHONUNBUFFERED": "1",
         "STORAGE_URL": "redis://default:SKNzsYzhLZ3eInH78gk7EWYEtIlRf4fd@redis-10101.c135.eu-central-1-1.ec2.redns.redis-cloud.com:10101"
-=======
-        "PYTHONUNBUFFERED": "1"
->>>>>>> 64a3e7edaee2f1f0d035ab9cce454790894bc3ab
     }
 } 
