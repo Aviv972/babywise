@@ -7,6 +7,7 @@ This module provides Redis connection and operations for the Babywise Chatbot.
 import os
 import json
 import logging
+import asyncio
 import aioredis
 from typing import Optional, Dict, Any, List
 from datetime import datetime, timedelta
@@ -30,8 +31,11 @@ RECENT_EVENTS_EXPIRATION = 1800  # 30 minutes
 ACTIVE_ROUTINE_EXPIRATION = 7200  # 2 hours
 THREAD_STATE_EXPIRATION = 86400  # 24 hours
 
+# Connection timeout in seconds
+REDIS_CONNECTION_TIMEOUT = 5.0
+
 async def initialize_redis() -> Optional[aioredis.Redis]:
-    """Initialize Redis connection"""
+    """Initialize Redis connection with timeout"""
     global _redis_client
     
     if _redis_client is not None:
@@ -42,10 +46,22 @@ async def initialize_redis() -> Optional[aioredis.Redis]:
         if not redis_url:
             logger.error("Redis URL not found in environment variables")
             return None
-            
-        _redis_client = await aioredis.from_url(redis_url)
+        
+        # Log Redis connection attempt (without exposing credentials)
+        masked_url = redis_url.replace(redis_url.split('@')[0], '***:***@')
+        logger.info(f"Attempting to connect to Redis at {masked_url}")
+        
+        # Use asyncio.wait_for to add a timeout
+        _redis_client = await asyncio.wait_for(
+            aioredis.from_url(redis_url, socket_timeout=REDIS_CONNECTION_TIMEOUT),
+            timeout=REDIS_CONNECTION_TIMEOUT
+        )
+        
         logger.info("Redis client initialized successfully")
         return _redis_client
+    except asyncio.TimeoutError:
+        logger.error(f"Redis connection timed out after {REDIS_CONNECTION_TIMEOUT} seconds")
+        return None
     except Exception as e:
         logger.error(f"Error initializing Redis client: {str(e)}")
         return None
@@ -55,10 +71,20 @@ async def ensure_redis_initialized() -> bool:
     try:
         redis = await initialize_redis()
         if redis is None:
+            logger.warning("Redis client is None, initialization failed")
             return False
-        # Test connection by pinging Redis
-        await redis.ping()
-        return True
+            
+        # Test connection by pinging Redis with timeout
+        try:
+            await asyncio.wait_for(redis.ping(), timeout=2.0)
+            logger.info("Redis ping successful")
+            return True
+        except asyncio.TimeoutError:
+            logger.error("Redis ping timed out")
+            return False
+        except Exception as e:
+            logger.error(f"Redis ping failed: {str(e)}")
+            return False
     except Exception as e:
         logger.error(f"Error ensuring Redis is initialized: {str(e)}")
         return False
