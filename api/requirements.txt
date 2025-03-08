@@ -8,4 +8,5 @@ langchain-community>=0.3,<0.4
 langchain-openai>=0.0.5
 langgraph>=0.2.20,<0.3
 starlette>=0.36.3
-aioredis>=2.0.0 
+aioredis>=2.0.0
+setuptools>=68.0.0 
