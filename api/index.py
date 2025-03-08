@@ -37,7 +37,7 @@ import fastapi
 import pydantic
 import starlette
 from fastapi import FastAPI, Request, Response, HTTPException, Depends
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
 
 # Log dependency versions
@@ -61,6 +61,71 @@ app.add_middleware(
 root_dir = Path(__file__).parent.parent
 sys.path.append(str(root_dir))
 logger.info(f"Added {root_dir} to Python path")
+
+# Root path handler to serve a simple HTML page
+@app.get("/", response_class=HTMLResponse)
+async def root():
+    """Serve a simple HTML page at the root path."""
+    html_content = """
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>Babywise Assistant API</title>
+        <style>
+            body {
+                font-family: Arial, sans-serif;
+                max-width: 800px;
+                margin: 0 auto;
+                padding: 20px;
+                line-height: 1.6;
+            }
+            h1 {
+                color: #2c3e50;
+                border-bottom: 1px solid #eee;
+                padding-bottom: 10px;
+            }
+            .endpoint {
+                background-color: #f8f9fa;
+                padding: 15px;
+                border-radius: 5px;
+                margin-bottom: 15px;
+            }
+            .endpoint h3 {
+                margin-top: 0;
+            }
+            code {
+                background-color: #eee;
+                padding: 2px 5px;
+                border-radius: 3px;
+            }
+        </style>
+    </head>
+    <body>
+        <h1>Babywise Assistant API</h1>
+        <p>Welcome to the Babywise Assistant API. This is the API server for the Babywise Assistant application.</p>
+        
+        <h2>Available Endpoints:</h2>
+        
+        <div class="endpoint">
+            <h3>Health Check</h3>
+            <p><code>GET /api/health</code> - Check if the API is running</p>
+        </div>
+        
+        <div class="endpoint">
+            <h3>Debug Information</h3>
+            <p><code>GET /debug</code> - Get debug information about the server environment</p>
+        </div>
+        
+        <div class="endpoint">
+            <h3>Chat API</h3>
+            <p><code>POST /api/chat</code> - Send a message to the assistant</p>
+        </div>
+        
+        <p>For more information, please refer to the API documentation.</p>
+    </body>
+    </html>
+    """
+    return HTMLResponse(content=html_content)
 
 # Debug endpoint to check versions
 @app.get("/debug")
