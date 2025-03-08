@@ -1,6 +1,7 @@
 import sys
 import os
 import logging
+import asyncio
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -41,35 +42,57 @@ logger.info(f"Directory contents: {dir_contents}")
 redis_status = False
 db_status = False
 workflow_status = False
+initialization_complete = False
 
-# Async initialization function
+# Async initialization function with timeout
 async def initialize_services():
-    global redis_status, db_status, workflow_status
+    global redis_status, db_status, workflow_status, initialization_complete
     
     try:
-        # Initialize Redis
-        from backend.services.redis_service import ensure_redis_initialized
-        redis_status = await ensure_redis_initialized()
-        logger.info(f"Redis initialization {'successful' if redis_status else 'failed'}")
-    except Exception as e:
-        logger.error(f"Redis initialization error: {str(e)}", exc_info=True)
+        # Initialize Redis with timeout
+        try:
+            logger.info("Attempting to initialize Redis...")
+            # Use asyncio.wait_for to add a timeout
+            from backend.services.redis_service import ensure_redis_initialized
+            redis_status = await asyncio.wait_for(ensure_redis_initialized(), timeout=5.0)
+            logger.info(f"Redis initialization {'successful' if redis_status else 'failed'}")
+        except asyncio.TimeoutError:
+            logger.warning("Redis initialization timed out after 5 seconds")
+            redis_status = False
+        except Exception as e:
+            logger.error(f"Redis initialization error: {str(e)}", exc_info=True)
+            redis_status = False
     
-    try:
         # Initialize database
-        from backend.db.routine_tracker import check_db_connection
-        db_status = check_db_connection()
-        logger.info(f"Database initialization {'successful' if db_status else 'failed'}")
-    except Exception as e:
-        logger.error(f"Database initialization error: {str(e)}", exc_info=True)
+        try:
+            logger.info("Attempting to initialize database...")
+            from backend.db.routine_tracker import check_db_connection
+            db_status = check_db_connection()
+            logger.info(f"Database initialization {'successful' if db_status else 'failed'}")
+        except Exception as e:
+            logger.error(f"Database initialization error: {str(e)}", exc_info=True)
+            db_status = False
     
-    try:
         # Initialize workflow
-        from backend.workflow.workflow import get_workflow
-        workflow = await get_workflow()
-        workflow_status = workflow is not None
-        logger.info(f"Workflow initialization {'successful' if workflow_status else 'failed'}")
+        try:
+            logger.info("Attempting to initialize workflow...")
+            from backend.workflow.workflow import get_workflow
+            workflow = await asyncio.wait_for(get_workflow(), timeout=5.0)
+            workflow_status = workflow is not None
+            logger.info(f"Workflow initialization {'successful' if workflow_status else 'failed'}")
+        except asyncio.TimeoutError:
+            logger.warning("Workflow initialization timed out after 5 seconds")
+            workflow_status = False
+        except Exception as e:
+            logger.error(f"Workflow initialization error: {str(e)}", exc_info=True)
+            workflow_status = False
+    
     except Exception as e:
-        logger.error(f"Workflow initialization error: {str(e)}", exc_info=True)
+        logger.error(f"Overall initialization error: {str(e)}", exc_info=True)
+    
+    # Mark initialization as complete regardless of success/failure
+    initialization_complete = True
+    logger.info("Service initialization completed")
 
 # Health check endpoint
 @app.get("/api/health")
@@ -78,6 +101,7 @@ async def health_check():
     return JSONResponse({
         "status": "ok" if redis_status and db_status and workflow_status else "degraded",
         "timestamp": datetime.now().isoformat(),
+        "initialization_complete": initialization_complete,
         "services": {
             "redis": "connected" if redis_status else "disconnected",
             "database": "connected" if db_status else "disconnected",
@@ -92,8 +116,10 @@ async def root():
     return {
         "status": "ok",
         "message": "Babywise API is running",
+        "initialization_complete": initialization_complete,
         "environment": {
             "python_version": python_version,
+            "current_directory": current_dir,
             "services": {
                 "redis": "connected" if redis_status else "disconnected",
                 "database": "connected" if db_status else "disconnected",
@@ -131,7 +157,9 @@ except Exception as e:
 @app.on_event("startup")
 async def startup_event():
     """Initialize services on startup"""
-    await initialize_services()
+    # Start initialization in background task
+    asyncio.create_task(initialize_services())
+    logger.info("Service initialization started in background")
 
 # This is required for Vercel serverless deployment
 app = app 
