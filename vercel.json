@@ -3,27 +3,35 @@
     "builds": [
         {
             "src": "api/index.py",
-            "use": "@vercel/python",
+            "use": "@vercel/python@3.1.33",
             "config": {
-                "runtime": "python3.9",
-                "maxLambdaSize": "50mb"
+                "maxLambdaSize": "15mb"
+            }
+        },
+        {
+            "src": "build.sh",
+            "use": "@vercel/static-build",
+            "config": {
+                "distDir": "public"
             }
         }
     ],
     "routes": [
         {
-            "src": "/(.*)",
+            "src": "/api/(.*)",
             "dest": "api/index.py"
+        },
+        {
+            "handle": "filesystem"
+        },
+        {
+            "src": "/(.*)",
+            "dest": "/$1"
         }
     ],
     "env": {
         "PYTHONPATH": ".",
         "PYTHONUNBUFFERED": "1",
         "STORAGE_URL": "redis://default:SKNzsYzhLZ3eInH78gk7EWYEtIlRf4fd@redis-10101.c135.eu-central-1-1.ec2.redns.redis-cloud.com:10101"
-    },
-    "build": {
-        "env": {
-            "PIP_DISABLE_PIP_VERSION_CHECK": "1"
-        }
     }
 } 

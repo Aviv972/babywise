@@ -1,0 +1,27 @@
+{
+  "name": "babywise",
+  "version": "1.0.0",
+  "description": "Babywise Assistant - A domain-specific assistant providing personalized baby care guidance",
+  "main": "index.js",
+  "scripts": {
+    "build": "./build.sh",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Aviv972/babywise.git"
+  },
+  "keywords": [
+    "baby",
+    "care",
+    "assistant",
+    "ai",
+    "chatbot"
+  ],
+  "author": "Aviv Carmi",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/Aviv972/babywise/issues"
+  },
+  "homepage": "https://github.com/Aviv972/babywise#readme"
+} 
