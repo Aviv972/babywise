@@ -134,9 +134,9 @@ def apply_pydantic_typing_patch() -> bool:
             except TypeError as e:
                 # If we still get a TypeError about recursive_guard, try to handle it directly
                 if "recursive_guard" in str(e):
-                    logger.warning(f"Caught TypeError: {str(e)}, attempting direct call")
-                    # Try to call _evaluate directly with the recursive_guard parameter
-                    return type_._evaluate(globalns, localns, set())
+                    logger.warning(f"Caught TypeError: {str(e)}, attempting direct call with keyword argument")
+                    # Try to call _evaluate directly with the recursive_guard parameter as a keyword argument
+                    return type_._evaluate(globalns, localns, recursive_guard=set())
                 else:
                     # Re-raise other TypeErrors
                     raise
