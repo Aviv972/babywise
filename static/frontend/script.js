@@ -35,7 +35,7 @@ const STORAGE_KEYS = {
 };
 
 // API base URL
-const API_BASE_URL = 'http://localhost:8000';
+const API_BASE_URL = '';  // Empty string means use relative URLs
 
 // API endpoints
 const API_ENDPOINTS = {
