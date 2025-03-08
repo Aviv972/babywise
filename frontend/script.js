@@ -38,7 +38,8 @@ const STORAGE_KEYS = {
 };
 
 // API base URL and mode
-const API_BASE_URL = 'http://localhost:8018';
+// Use relative URL for production deployment
+const API_BASE_URL = '';  // Empty string means use relative URLs
 const USE_SERVER_PY = true; // Set to true if using server.py, false if using uvicorn directly
 
 // API endpoints

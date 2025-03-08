@@ -10,7 +10,7 @@
 
 // Configuration
 const CONFIG = {
-    apiUrl: 'http://localhost:8080',
+    apiUrl: '',  // Empty string means use relative URLs
     debugMode: false,
     defaultLanguage: 'en'
 };
