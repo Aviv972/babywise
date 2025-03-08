@@ -1,14 +1,43 @@
 {
+    "version": 2,
     "builds": [
         {
             "src": "api/index.py",
-            "use": "@vercel/python"
+            "use": "@vercel/python",
+            "config": {
+                "runtime": "python3.10",
+                "maxLambdaSize": "15mb"
+            }
+        },
+        {
+            "src": "frontend/**",
+            "use": "@vercel/static"
         }
     ],
     "routes": [
         {
-            "src": "/(.*)",
+            "src": "/api/(.*)",
             "dest": "api/index.py"
+        },
+        {
+            "src": "/debug",
+            "dest": "api/index.py"
+        },
+        {
+            "src": "/favicon.ico",
+            "dest": "api/index.py"
+        },
+        {
+            "src": "/favicon.png",
+            "dest": "api/index.py"
+        },
+        {
+            "src": "/(.*\\.(js|css|svg|png|jpg|jpeg|gif|ico))",
+            "dest": "/frontend/$1"
+        },
+        {
+            "src": "/(.*)",
+            "dest": "/frontend/index.html"
         }
     ],
     "env": {

@@ -184,8 +184,38 @@ def patch_distutils() -> bool:
                     return self.version_string > other
                 return self.version_string > other.version_string
         
-        # Add LooseVersion to the mock module
+        # Create StrictVersion class
+        class StrictVersion:
+            def __init__(self, version_string):
+                self.version_string = version_string
+                # Parse version string into components
+                components = version_string.split('.')
+                self.version = tuple(map(int, components))
+                
+            def __str__(self):
+                return self.version_string
+                
+            def __repr__(self):
+                return f"StrictVersion('{self.version_string}')"
+                
+            def __eq__(self, other):
+                if isinstance(other, str):
+                    return self.version_string == other
+                return self.version == other.version
+                
+            def __lt__(self, other):
+                if isinstance(other, str):
+                    other = StrictVersion(other)
+                return self.version < other.version
+                
+            def __gt__(self, other):
+                if isinstance(other, str):
+                    other = StrictVersion(other)
+                return self.version > other.version
+        
+        # Add version classes to the mock module
         mock_version.LooseVersion = LooseVersion
+        mock_version.StrictVersion = StrictVersion
         
         # Create distutils.errors submodule
         mock_errors = types.ModuleType('distutils.errors')
