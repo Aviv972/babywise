@@ -1,5 +1,6 @@
 fastapi==0.95.2
 pydantic==1.10.8
+typing_extensions==4.5.0
 uvicorn[standard]==0.22.0
 langchain==0.0.194
 langgraph==0.0.38 
