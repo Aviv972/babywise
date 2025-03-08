@@ -1,0 +1,631 @@
+Babywise Chatbot: System Overview and Guidelines
+1. Architecture Overview
+The Babywise chatbot operates on a multi-agent architecture where each specialized agent handles specific categories of queries. The system maintains context throughout conversations and uses AI models to generate relevant responses and follow-up questions.
+
+2. Universal Query Processing Flow
+a. Initial Query Reception
+- User submits a query via the chat interface
+- System stores the original query in context (never overwritten)
+- Extracts key terms and intent
+
+b. Agent Selection & Context Management
+- System selects appropriate agent based on query domain
+- Initializes conversation context if new
+- Maintains unified context store for the entire conversation
+
+c. Context-Aware Processing
+- Each agent analyzes available context before responding
+- Determines if sufficient information exists
+- Identifies what additional context is needed
+
+d. Dynamic Response Generation
+The system follows these steps for EVERY query, regardless of agent type:
+1. Check Existing Context
+   - Review gathered_info dictionary
+   - Analyze conversation history
+   - Evaluate relevance of stored information
+
+2. Determine Information Needs
+   - Identify critical missing information
+   - Assess which context would improve response quality
+   - Prioritize follow-up questions
+
+3. Generate Response
+   If sufficient context exists:
+   - Create enhanced prompt including:
+     * Original query
+     * Gathered context
+     * Conversation history
+     * Domain-specific requirements
+   - Use LLM to generate comprehensive response
+
+   If context is insufficient:
+   - Generate contextual follow-up question
+   - Include existing context in question generation
+   - Ensure questions build upon previous answers
+
+3. Context Management Best Practices
+
+a. Unified Context Store
+```python
+self.conversation_state = {
+    'original_query': 'initial user question',
+    'gathered_info': {
+        'field_name': 'value',
+        'preferences': 'user preferences',
+        'age': 'baby age',
+        # ... other contextual information
+    },
+    'conversation_history': [
+        # ... list of previous interactions
+    ]
+}
+```
+
+b. Context-Aware Question Generation
+When generating follow-up questions:
+```python
+prompt = f"""
+Based on the following context:
+- Original Query: {context['original_query']}
+- Current Information:
+{json.dumps(context['gathered_info'], indent=2)}
+- Conversation History:
+{format_conversation_history(context['conversation_history'])}
+
+Determine the most relevant follow-up question to ask.
+Consider:
+1. What critical information is missing
+2. How this relates to previous answers
+3. The natural flow of conversation
+
+Generate a clear, conversational question in the same language as the original query.
+"""
+```
+
+c. Enhanced Response Generation
+When generating responses:
+```python
+prompt = f"""
+Based on the following context:
+- Original Query: {context['original_query']}
+- Gathered Information:
+{json.dumps(context['gathered_info'], indent=2)}
+- Recent Conversation:
+{format_recent_messages(context['conversation_history'])}
+
+Provide a detailed response that:
+1. Directly addresses the original query
+2. Incorporates all relevant context
+3. Maintains conversation continuity
+4. Suggests additional helpful information if appropriate
+
+Response should be in the same language as the original query.
+"""
+```
+
+4. Agent-Specific Guidelines
+
+Each agent should:
+1. Define critical_fields required for their domain
+2. Implement context validation for their specific needs
+3. Provide domain-specific prompt enhancements
+4. Maintain conversation relevance to their expertise
+
+Example for Sleep Agent:
+```python
+critical_fields = {
+    'baby_age': 'Essential for age-appropriate advice',
+    'current_sleep_pattern': 'Understand existing routine',
+    'sleep_environment': 'Optional but helpful'
+}
+```
+
+5. Response Quality Guidelines
+
+All responses should:
+1. Be directly relevant to the original query
+2. Incorporate available context naturally
+3. Maintain conversation flow
+4. Provide actionable information
+5. Ask follow-up questions only when necessary
+6. Use the same language as the user's query
+
+6. Context Relevance Scoring
+
+Track relevance of gathered information:
+```python
+context_relevance = {
+    'field_name': {
+        'score': 0.8,  # Relevance score
+        'timestamp': '2024-03-20T10:30:00Z',
+        'relation_to_query': 'direct|indirect|supporting'
+    }
+}
+```
+
+7. Error Handling & Edge Cases
+
+Handle:
+1. Incomplete or unclear user inputs
+2. Context conflicts or inconsistencies
+3. Language switching mid-conversation
+4. Multiple topics in single query
+5. Context retention across sessions
+
+8. Performance Optimization
+
+1. Store only relevant context
+2. Regularly clean up outdated information
+3. Prioritize critical fields for each domain
+4. Cache common response patterns
+5. Optimize prompt construction
+
+9. Security & Privacy
+
+1. Sanitize all stored context
+2. Remove sensitive information
+3. Implement context expiration
+4. Maintain user data privacy
+5. Secure context storage
+
+10. Testing & Validation
+
+Verify:
+1. Context gathering accuracy
+2. Question relevance
+3. Response quality
+4. Context retention
+5. Multi-turn conversation handling
+
+4. Additional Guidelines
+4.1 Coding Standards
+Use [language] for all code files.
+Follow [style guide] for code formatting.
+Use [naming convention] for variables and functions.
+Prefer [functional/OOP] programming paradigm.
+4.2 Project Structure
+src/: Contains all source code.
+tests/: Contains all unit and integration tests.
+docs/: Contains project documentation.
+4.3 Libraries and Frameworks
+Use [framework/library name] version [X.X.X] for [purpose].
+Prefer [library] for [specific task].
+4.4 Best Practices
+Write unit tests for all new functions.
+Use async/await for asynchronous operations.
+Implement error handling for all API calls.
+Use TypeScript for type safety (if applicable).
+4.5 Code Patterns
+Use the repository pattern for data access.
+Implement dependency injection where appropriate.
+
+4.6 Documentation
+Use JSDoc for inline documentation.
+Keep README.md up to date with project setup and usage instructions.
+4.7 Performance Considerations
+Optimize database queries for large datasets.
+Use memoization for expensive computations.
+4.8 Security
+Sanitize all user inputs.
+Use environment variables for sensitive information.
+Implement proper authentication and authorization.
+4.9 Avoid
+Do not use console.log for production logging.
+Avoid using the any type in TypeScript unless absolutely necessary.
+5. Project-Specific Guidelines
+Ensure agents adhere strictly to their defined domains (avoid overlapping advice).
+Validate and enforce context gathering so each response is personalized.
+Use clear, concise language tailored for new parents.
+Dynamically generate clarifying questions (avoid hardcoding).
+Merge user clarifications with the original query into a unified context for final response generation.
+Handle API access errors robustly, informing developers if keys are misconfigured.
+5.1 Examples
+Agent Assignment: If the query contains "stroller" or "car seat," route to the Baby Gear Expert.
+Dynamic Question Generation: For "find me a cost-effective stroller," clarifications needed might be "budget," "features," and "usage."
+Context Merging: If the user clarifies their budget is "$300" and wants "lightweight, foldable," store these details and merge them with the original query for the final response.
+API Access Error Handling: If an API call fails (e.g., invalid API key), return a clear error instructing developers to verify configuration.
+6. Key Project Files
+Configuration & Environment
+
+.env: Contains environment variables and API keys
+OPENAI_API_KEY
+PERPLEXITY_API_KEY
+MODEL_NAME (e.g., gpt-4o-mini)
+DATABASE_URL (SQLite or PostgreSQL path)
+Core Services
+
+src/services/llm_service.py: LLM integration (API calls to OpenAI, response generation, error handling)
+src/services/chat_session.py: Manages chat state, routes queries to agents, handles context gathering.
+Agent System
+
+src/agents/base_agent.py: Base agent functionality, query analysis, context management.
+src/agents/baby_gear_agent.py: Handles strollers, car seats, cribs; provides product recommendations.
+src/agents/pregnancy_agent.py: Handles pregnancy queries, general guidance (no medical advice).
+API & Frontend
+
+src/routes/chat.py: Backend endpoint for chat requests.
+src/static/script.js: Frontend logic (UI, message display, error handling).
+
+7. Review Before Tasks
+API Keys
+Check full keys in .env.
+Verify key validation in config.py.
+Test API connection in llm_service.py.
+Agent Selection
+Review agent_factory.py logic and confidence calculations.
+Test with various queries.
+Error Handling
+Verify API error catching, response formatting, and error displays.
+Testing
+Use cli_test.py for backend tests.
+Test frontend with local server.
+Check gear vs. pregnancy agent responses.
+Context Gathering
+Ensure consistent storage using a unified key (e.g., gathered_context).
+Parse and store clarifications correctly.
+Merge the original query with follow-up answers in the final prompt.
+8. Common Errors to Avoid / Common Pitfalls
+Text Format Issues
+Always return responses as flat JSON objects ({"type": "...", "text": "..."}).
+Avoid double-wrapping responses.
+Agent Assignment Mistakes
+Each agent must adhere to its domain.
+Validate that keyword matching/thresholds select the correct agent.
+Endpoint and Response Wrapping Errors
+The API endpoint should return the agent's response directly.
+Ensure no middleware or global handlers break the flat format.
+API Access Errors
+Confirm valid, secure environment variables for the API keys.
+Catch errors like 401 and provide a helpful fallback message.
+Follow-up Questions & Context Loss
+Don't ignore previously gathered data.
+Use a unified store so you don't re-ask for fields you already have.
+
+CORSUR Rules for Context Management:
+
+1. Universal Context Management
+Every query, regardless of agent type, must follow these context management rules:
+```python
+# Initialize and maintain a single source of truth for context
+self.conversation_state = {
+    'original_query': None,  # The user's initial question
+    'gathered_info': {},     # All collected context
+    'conversation_history': [],  # Full conversation history
+    'agent_type': None,      # Current handling agent
+    'context_relevance': {}  # Track relevance of gathered info
+}
+```
+
+2. Context-Aware Question Generation
+When the LLM needs to generate a follow-up question:
+```python
+prompt = f"""
+You are an AI assistant helping with baby-related queries.
+Based on the following context:
+
+ORIGINAL QUERY: {context['original_query']}
+
+CURRENT INFORMATION:
+{json.dumps(context['gathered_info'], indent=2)}
+
+CONVERSATION HISTORY:
+{format_conversation_history(context['conversation_history'])}
+
+Your task is to:
+1. Analyze what critical information is still needed
+2. Consider the natural flow of conversation
+3. Generate ONE follow-up question that:
+   - Is most relevant to answering the original query
+   - Builds upon existing context
+   - Is phrased conversationally
+   - Uses the same language as the original query
+
+The question should feel like a natural part of the conversation, not an interrogation.
+"""
+```
+
+3. Context-Aware Response Generation
+When generating a response with context:
+```python
+prompt = f"""
+You are an AI assistant specializing in {agent_type} advice.
+Based on the following context:
+
+ORIGINAL QUERY: {context['original_query']}
+
+GATHERED INFORMATION:
+{json.dumps(context['gathered_info'], indent=2)}
+
+RECENT CONVERSATION:
+{format_recent_messages(context['conversation_history'])}
+
+Your task is to:
+1. Provide a comprehensive response that directly addresses the original query
+2. Naturally incorporate all relevant context
+3. Maintain conversation flow and style
+4. Suggest additional helpful information if appropriate
+5. Use the same language as the user's query
+
+Response should be helpful and conversational, not just a data dump.
+"""
+```
+
+4. Dynamic Context Evaluation
+Before each response or question:
+```python
+# Check if we have enough context to provide a meaningful response
+def _evaluate_context_sufficiency(self, query: str, context: Dict) -> bool:
+    # Always include original query and full context in evaluation
+    evaluation_prompt = f"""
+    Based on:
+    - Original Query: {context['original_query']}
+    - Current Query: {query}
+    - Gathered Info: {json.dumps(context['gathered_info'], indent=2)}
+    
+    Determine if we have sufficient context to provide a meaningful response.
+    Consider:
+    1. Critical information needed for this type of query
+    2. Quality and relevance of gathered information
+    3. Relationship between current query and original question
+    """
+    return await self.llm_service.evaluate_context(evaluation_prompt)
+```
+
+5. Context Persistence Rules
+- Never overwrite original_query
+- Always append to conversation_history
+- Update gathered_info with new information
+- Maintain context relevance scores
+- Clean up outdated or irrelevant context periodically
+
+6. Context Access Patterns
+```python
+# When accessing context, always include all relevant information
+async def process_query(self, query: str) -> Dict:
+    context = {
+        'original_query': self.conversation_state['original_query'],
+        'gathered_info': self.conversation_state['gathered_info'],
+        'conversation_history': self.get_recent_history(10),
+        'agent_type': self.conversation_state['agent_type'],
+        'context_relevance': self.conversation_state['context_relevance']
+    }
+    
+    # Let the LLM decide if we need more context or can provide a response
+    if await self._evaluate_context_sufficiency(query, context):
+        return await self._generate_response(query, context)
+    else:
+        return await self._generate_follow_up_question(query, context)
+```
+
+These rules ensure:
+1. Consistent context management across all agents
+2. Natural conversation flow
+3. Intelligent question generation
+4. Context-aware responses
+5. Proper context persistence
+6. Efficient context utilization
+
+The key principle is that the LLM should always have access to the full context when making decisions, whether generating questions or responses.
+
+Chat UI Requirements: Web App + Responsive Design
+This document ensures the chat interface is optimized for both desktop and mobile views while maintaining a WhatsApp-like experience.
+
+1️⃣ Layout & Background
+Issue:
+The chat should not be full-screen but a floating panel for the web app.
+
+Fix:
+Chat Container
+Desktop:
+
+Max Width: 700px
+Height: 85vh (chat should not take the entire screen but stay visible).
+Margin: auto (to center the chat in the viewport).
+Box Shadow: 0px 4px 10px rgba(0, 0, 0, 0.1); (for a soft floating effect).
+Border Radius: 12px.
+Mobile:
+
+Width: 100% (full width for small screens).
+Height: 100vh (full height for a better mobile experience).
+Border Radius: 0px (mobile chat should be fullscreen for usability).
+Background
+Background Color: #E5DDD5 (light beige, similar to WhatsApp).
+Pattern:
+Use a semi-transparent PNG or CSS repeating-linear-gradient to match WhatsApp’s subtle background texture.
+2️⃣ Responsive Design Adjustments
+Issue:
+The chat UI should dynamically adjust based on screen size.
+
+Fix:
+Use CSS media queries to adapt layout for mobile, tablet, and desktop.
+Implement fluid margins and padding for different screen sizes.
+Ensure consistent font sizes across devices.
+css
+Copy
+Edit
+/* Mobile Screens */
+@media (max-width: 768px) {
+    .chat-container {
+        width: 100%;
+        height: 100vh;
+        border-radius: 0px;
+    }
+    .message-bubble {
+        max-width: 90%;
+    }
+}
+
+/* Tablet and Small Desktop Screens */
+@media (min-width: 769px) and (max-width: 1024px) {
+    .chat-container {
+        width: 80%;
+        height: 85vh;
+    }
+}
+
+/* Large Screens */
+@media (min-width: 1025px) {
+    .chat-container {
+        width: 700px;
+        height: 85vh;
+    }
+}
+3️⃣ Font Style
+Issue:
+The font does not match WhatsApp’s standard font.
+
+Fix:
+Use "Helvetica Neue", "San Francisco", or "Roboto".
+Font sizes:
+Messages: 16px
+Timestamps: 12px
+Ensure consistent line height for readability.
+4️⃣ Message Bubble Design
+Issue:
+The chat bubbles need to match WhatsApp’s compact, rounded look.
+
+Fix:
+User Messages (Outgoing)
+Background Color: #DCF8C6 (light green).
+Text Color: #000000 (black).
+Border Radius: 16px.
+Alignment: Right-aligned.
+Padding: 8px vertical, 12px horizontal.
+Max Width: 75% of the chat window.
+Agent Messages (Incoming)
+Background Color: #FFFFFF (white).
+Text Color: #000000 (black).
+Border Radius: 16px.
+Alignment: Left-aligned.
+Padding: 8px vertical, 12px horizontal.
+Max Width: 75% of the chat window.
+5️⃣ Timestamp Placement
+Issue:
+The timestamp appears detached and misaligned.
+
+Fix:
+Position: Inside the message bubble, bottom right.
+Font Size: 12px.
+Color: Light gray (#999999).
+Alignment: Right-aligned with the last line of the message text.
+6️⃣ Typing Indicator
+Issue:
+No visible typing animation when the agent is responding.
+
+Fix:
+Implement a three-dot animation (•••) inside a small chat bubble.
+Background color: #FFFFFF (same as agent messages).
+Alignment: Left-aligned (same as agent messages).
+Use animation: Fading-in-and-out effect.
+css
+Copy
+Edit
+.typing-indicator {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 25px;
+  background: #FFFFFF;
+  border-radius: 16px;
+}
+
+.typing-indicator span {
+  height: 6px;
+  width: 6px;
+  background-color: #999999;
+  border-radius: 50%;
+  margin: 2px;
+  animation: blink 1.4s infinite;
+}
+
+.typing-indicator span:nth-child(2) {
+  animation-delay: 0.2s;
+}
+
+.typing-indicator span:nth-child(3) {
+  animation-delay: 0.4s;
+}
+
+@keyframes blink {
+  0% { opacity: 0.3; }
+  50% { opacity: 1; }
+  100% { opacity: 0.3; }
+}
+7️⃣ Message Spacing and Alignment
+Issue:
+Spacing between messages is inconsistent.
+
+Fix:
+Maintain 4px margin between consecutive messages from the same sender.
+Add a 10-12px margin between user and agent messages.
+Ensure consistent vertical spacing for better readability.
+8️⃣ Input Field & Send Button
+Issue:
+The input field does not match WhatsApp’s design.
+
+Fix:
+Background color: #FFFFFF
+Border: None
+Border radius: 24px
+Height: 40px
+Padding: 8px 12px
+Font size: 16px
+Send button:
+Use a paper plane icon (➤).
+Color: #128C7E (WhatsApp green).
+Align inside the input box, right side.
+css
+Copy
+Edit
+.input-container {
+  display: flex;
+  align-items: center;
+  background: #ffffff;
+  border-radius: 24px;
+  padding: 8px 12px;
+}
+
+.input-container input {
+  flex: 1;
+  border: none;
+  font-size: 16px;
+}
+
+.input-container button {
+  background: none;
+  border: none;
+  color: #128C7E;
+  font-size: 20px;
+  cursor: pointer;
+}
+9️⃣ Responsive Design Summary
+Mobile (width < 768px) → Chat should be full width, full height.
+Tablet (768px - 1024px) → Chat should be 80% of the width.
+Desktop (width > 1024px) → Chat should be centered at 700px width.
+css
+Copy
+Edit
+@media (max-width: 768px) {
+    .chat-container {
+        width: 100%;
+        height: 100vh;
+        border-radius: 0px;
+    }
+    .message-bubble {
+        max-width: 90%;
+    }
+}
+@media (min-width: 769px) and (max-width: 1024px) {
+    .chat-container {
+        width: 80%;
+        height: 85vh;
+    }
+}
+@media (min-width: 1025px) {
+    .chat-container {
+        width: 700px;
+        height: 85vh;
+    }
+}
