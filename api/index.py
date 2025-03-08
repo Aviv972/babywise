@@ -13,15 +13,7 @@ import os
 import logging
 import importlib
 from pathlib import Path
-from typing import Dict, Any, Optional, List
-
-# Import FastAPI and related modules with explicit version checking
-import fastapi
-import pydantic
-import starlette
-from fastapi import FastAPI, Request, Response, HTTPException, Depends
-from fastapi.responses import JSONResponse
-from fastapi.middleware.cors import CORSMiddleware
+from typing import Dict, Any, Optional, List, ForwardRef, cast
 
 # Configure logging
 logging.basicConfig(
@@ -29,6 +21,30 @@ logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
 logger = logging.getLogger(__name__)
+
+# Apply ForwardRef patch BEFORE importing FastAPI
+# This is a critical fix for the "ForwardRef._evaluate() missing 1 required keyword-only argument: 'recursive_guard'" error
+try:
+    logger.info("Applying ForwardRef._evaluate patch")
+    original_evaluate = getattr(ForwardRef, "_evaluate", None)
+    if original_evaluate and "recursive_guard" not in original_evaluate.__code__.co_varnames:
+        def patched_evaluate(self, globalns, localns, recursive_guard=None):
+            if recursive_guard is None:
+                recursive_guard = set()
+            return original_evaluate(self, globalns, localns)
+        
+        ForwardRef._evaluate = patched_evaluate
+        logger.info("ForwardRef._evaluate patched successfully")
+except Exception as e:
+    logger.error(f"Failed to patch ForwardRef._evaluate: {str(e)}")
+
+# Now import FastAPI and related modules
+import fastapi
+import pydantic
+import starlette
+from fastapi import FastAPI, Request, Response, HTTPException, Depends
+from fastapi.responses import JSONResponse
+from fastapi.middleware.cors import CORSMiddleware
 
 # Log dependency versions
 logger.info(f"FastAPI version: {fastapi.__version__}")
@@ -112,27 +128,6 @@ BACKEND_AVAILABLE = False
 try:
     # Import backend modules
     logger.info("Attempting to import backend modules")
-    
-    # First, try to update forward refs in pydantic models
-    # This is a workaround for the ForwardRef._evaluate issue
-    try:
-        from pydantic import BaseModel
-        from typing import ForwardRef
-        
-        # Monkey patch ForwardRef._evaluate if needed
-        original_evaluate = getattr(ForwardRef, "_evaluate", None)
-        if original_evaluate and "recursive_guard" not in original_evaluate.__code__.co_varnames:
-            logger.info("Applying ForwardRef._evaluate patch")
-            
-            def patched_evaluate(self, globalns, localns, recursive_guard=None):
-                if recursive_guard is None:
-                    recursive_guard = set()
-                return original_evaluate(self, globalns, localns)
-            
-            ForwardRef._evaluate = patched_evaluate
-            logger.info("ForwardRef._evaluate patched successfully")
-    except Exception as e:
-        logger.error(f"Failed to patch ForwardRef._evaluate: {str(e)}")
     
     # Now try to import the backend
     from backend.api.main import app as backend_app
