@@ -12,6 +12,7 @@ import sys
 import os
 import logging
 import importlib
+import base64
 from pathlib import Path
 
 # Configure logging
@@ -37,7 +38,7 @@ import fastapi
 import pydantic
 import starlette
 from fastapi import FastAPI, Request, Response, HTTPException, Depends
-from fastapi.responses import JSONResponse, HTMLResponse
+from fastapi.responses import JSONResponse, HTMLResponse, Response
 from fastapi.middleware.cors import CORSMiddleware
 
 # Log dependency versions
@@ -71,6 +72,7 @@ async def root():
     <html>
     <head>
         <title>Babywise Assistant API</title>
+        <link rel="icon" href="/favicon.ico" type="image/x-icon">
         <style>
             body {
                 font-family: Arial, sans-serif;
@@ -126,6 +128,25 @@ async def root():
     </html>
     """
     return HTMLResponse(content=html_content)
+
+# Favicon handler to prevent 404 errors
+@app.get("/favicon.ico")
+async def favicon():
+    """Serve a simple favicon to prevent 404 errors."""
+    # This is a minimal 16x16 favicon (base64 encoded)
+    favicon_base64 = "AAABAAEAEBAAAAEAIABoBAAAFgAAACgAAAAQAAAAIAAAAAEAIAAAAAAAAAQAABILAAASCwAAAAAAAAAAAAD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A//8AAP//AAD//wAA//8AAP//AAD//wAA//8AAP//AAD//wAA//8AAP//AAD//wAA//8AAP//AAD//wAA//8AAA=="
+    
+    # Decode the base64 string to bytes
+    favicon_bytes = base64.b64decode(favicon_base64)
+    
+    # Return the favicon with the appropriate content type
+    return Response(content=favicon_bytes, media_type="image/x-icon")
+
+# Also handle favicon.png for browsers that prefer PNG
+@app.get("/favicon.png")
+async def favicon_png():
+    """Redirect to favicon.ico for simplicity."""
+    return Response(status_code=307, headers={"Location": "/favicon.ico"})
 
 # Debug endpoint to check versions
 @app.get("/debug")

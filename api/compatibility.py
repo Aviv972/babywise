@@ -130,6 +130,85 @@ def apply_direct_pydantic_patch() -> bool:
         logger.error(f"Failed to apply direct pydantic patch: {str(e)}")
         return False
 
+def patch_distutils() -> bool:
+    """
+    Create a mock distutils module if it's missing.
+    
+    This is needed for Python 3.12+ where distutils was removed from the standard library.
+    Many packages still depend on distutils, so we create a minimal mock implementation.
+    
+    Returns:
+        bool: True if patch was applied successfully, False otherwise
+    """
+    try:
+        # Check if distutils is already available
+        try:
+            import distutils
+            logger.info("distutils module already exists, no patching needed")
+            return True
+        except ImportError:
+            logger.info("distutils module not found, creating mock implementation")
+            
+        # Create a mock distutils module
+        mock_distutils = types.ModuleType('distutils')
+        mock_distutils.__path__ = []
+        sys.modules['distutils'] = mock_distutils
+        
+        # Create distutils.version submodule
+        mock_version = types.ModuleType('distutils.version')
+        sys.modules['distutils.version'] = mock_version
+        
+        # Create LooseVersion class
+        class LooseVersion:
+            def __init__(self, version_string):
+                self.version_string = version_string
+                
+            def __str__(self):
+                return self.version_string
+                
+            def __repr__(self):
+                return f"LooseVersion('{self.version_string}')"
+                
+            def __eq__(self, other):
+                if isinstance(other, str):
+                    return self.version_string == other
+                return self.version_string == other.version_string
+                
+            def __lt__(self, other):
+                if isinstance(other, str):
+                    return self.version_string < other
+                return self.version_string < other.version_string
+                
+            def __gt__(self, other):
+                if isinstance(other, str):
+                    return self.version_string > other
+                return self.version_string > other.version_string
+        
+        # Add LooseVersion to the mock module
+        mock_version.LooseVersion = LooseVersion
+        
+        # Create distutils.errors submodule
+        mock_errors = types.ModuleType('distutils.errors')
+        sys.modules['distutils.errors'] = mock_errors
+        
+        # Add common error classes
+        class DistutilsError(Exception): pass
+        class DistutilsModuleError(DistutilsError): pass
+        class DistutilsExecError(DistutilsError): pass
+        class DistutilsPlatformError(DistutilsError): pass
+        
+        mock_errors.DistutilsError = DistutilsError
+        mock_errors.DistutilsModuleError = DistutilsModuleError
+        mock_errors.DistutilsExecError = DistutilsExecError
+        mock_errors.DistutilsPlatformError = DistutilsPlatformError
+        
+        logger.info("Successfully created mock distutils module")
+        return True
+        
+    except Exception as e:
+        logger.error(f"Failed to patch distutils: {str(e)}")
+        return False
+
 def apply_all_patches() -> Dict[str, bool]:
     """
     Apply all compatibility patches and return their status.
@@ -145,6 +224,9 @@ def apply_all_patches() -> Dict[str, bool]:
     
     # Apply direct pydantic patch
     results["direct_pydantic_patch"] = apply_direct_pydantic_patch()
+    
+    # Apply distutils patch
+    results["distutils_patch"] = patch_distutils()
     
     # Log overall results
     success_count = sum(1 for success in results.values() if success)
