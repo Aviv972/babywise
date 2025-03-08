@@ -11,9 +11,15 @@ provides proper error handling for the serverless environment.
 import sys
 import os
 import logging
-import json
+import importlib
 from pathlib import Path
-from fastapi import FastAPI, Request, Response, HTTPException
+from typing import Dict, Any, Optional, List
+
+# Import FastAPI and related modules with explicit version checking
+import fastapi
+import pydantic
+import starlette
+from fastapi import FastAPI, Request, Response, HTTPException, Depends
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -23,6 +29,11 @@ logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
 logger = logging.getLogger(__name__)
+
+# Log dependency versions
+logger.info(f"FastAPI version: {fastapi.__version__}")
+logger.info(f"Pydantic version: {pydantic.__version__}")
+logger.info(f"Starlette version: {starlette.__version__}")
 
 # Create a FastAPI app
 app = FastAPI(title="Babywise Assistant API")
@@ -41,10 +52,89 @@ root_dir = Path(__file__).parent.parent
 sys.path.append(str(root_dir))
 logger.info(f"Added {root_dir} to Python path")
 
+# Debug endpoint to check versions
+@app.get("/debug")
+async def debug_versions():
+    """Debug endpoint to check runtime versions."""
+    try:
+        # Try to import additional modules
+        modules = {
+            "fastapi": fastapi.__version__,
+            "pydantic": pydantic.__version__,
+            "starlette": starlette.__version__
+        }
+        
+        # Try to import langchain and langgraph
+        try:
+            import langchain
+            modules["langchain"] = langchain.__version__
+        except (ImportError, AttributeError):
+            modules["langchain"] = "not available"
+            
+        try:
+            import langgraph
+            modules["langgraph"] = langgraph.__version__
+        except (ImportError, AttributeError):
+            modules["langgraph"] = "not available"
+        
+        # Get Python version
+        import platform
+        python_version = platform.python_version()
+        
+        return {
+            "status": "ok",
+            "python_version": python_version,
+            "modules": modules,
+            "sys_path": sys.path
+        }
+    except Exception as e:
+        logger.error(f"Error in debug endpoint: {str(e)}")
+        return {
+            "status": "error",
+            "error": str(e)
+        }
+
+# Health check endpoint
+@app.get("/api/health")
+async def health_check():
+    """Health check endpoint."""
+    return {
+        "status": "ok",
+        "service": "Babywise API",
+        "versions": {
+            "fastapi": fastapi.__version__,
+            "pydantic": pydantic.__version__
+        }
+    }
+
 # Try to import the backend app
+BACKEND_AVAILABLE = False
 try:
-    # Import the backend app
+    # Import backend modules
     logger.info("Attempting to import backend modules")
+    
+    # First, try to update forward refs in pydantic models
+    # This is a workaround for the ForwardRef._evaluate issue
+    try:
+        from pydantic import BaseModel
+        from typing import ForwardRef
+        
+        # Monkey patch ForwardRef._evaluate if needed
+        original_evaluate = getattr(ForwardRef, "_evaluate", None)
+        if original_evaluate and "recursive_guard" not in original_evaluate.__code__.co_varnames:
+            logger.info("Applying ForwardRef._evaluate patch")
+            
+            def patched_evaluate(self, globalns, localns, recursive_guard=None):
+                if recursive_guard is None:
+                    recursive_guard = set()
+                return original_evaluate(self, globalns, localns)
+            
+            ForwardRef._evaluate = patched_evaluate
+            logger.info("ForwardRef._evaluate patched successfully")
+    except Exception as e:
+        logger.error(f"Failed to patch ForwardRef._evaluate: {str(e)}")
+    
+    # Now try to import the backend
     from backend.api.main import app as backend_app
     
     # Use the backend app's routes
@@ -57,22 +147,6 @@ except Exception as e:
     # Log the error
     logger.error(f"Failed to import backend app: {str(e)}")
     logger.error(f"Python path: {sys.path}")
-    
-    # Backend import failed, provide fallback functionality
-    BACKEND_AVAILABLE = False
-
-# Health check endpoint
-@app.get("/api/health")
-async def health_check():
-    """Health check endpoint."""
-    if BACKEND_AVAILABLE:
-        return {"status": "ok", "backend": "available"}
-    else:
-        return {
-            "status": "limited", 
-            "backend": "unavailable", 
-            "message": "Backend services are currently unavailable. Basic functionality only."
-        }
 
 # Fallback chat endpoint if backend is not available
 @app.post("/api/chat")
@@ -203,7 +277,4 @@ async def summary_fallback(request: Request):
         return JSONResponse(
             status_code=500,
             content={"error": "Internal server error", "detail": str(e)}
-        )
-
-# Export the app for Vercel
-app = app 
+        ) 
