@@ -13,7 +13,6 @@ import os
 import logging
 import importlib
 from pathlib import Path
-from typing import Dict, Any, Optional, List, ForwardRef, cast
 
 # Configure logging
 logging.basicConfig(
@@ -22,21 +21,16 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Apply ForwardRef patch BEFORE importing FastAPI
-# This is a critical fix for the "ForwardRef._evaluate() missing 1 required keyword-only argument: 'recursive_guard'" error
+# Import compatibility module to apply patches before any other imports
 try:
-    logger.info("Applying ForwardRef._evaluate patch")
-    original_evaluate = getattr(ForwardRef, "_evaluate", None)
-    if original_evaluate and "recursive_guard" not in original_evaluate.__code__.co_varnames:
-        def patched_evaluate(self, globalns, localns, recursive_guard=None):
-            if recursive_guard is None:
-                recursive_guard = set()
-            return original_evaluate(self, globalns, localns)
-        
-        ForwardRef._evaluate = patched_evaluate
-        logger.info("ForwardRef._evaluate patched successfully")
+    logger.info("Importing compatibility module")
+    from api.compatibility import patch_results
+    logger.info(f"Compatibility patches applied: {patch_results}")
 except Exception as e:
-    logger.error(f"Failed to patch ForwardRef._evaluate: {str(e)}")
+    logger.error(f"Failed to import compatibility module: {str(e)}")
+
+# Now import other modules
+from typing import Dict, Any, Optional, List, ForwardRef, cast
 
 # Now import FastAPI and related modules
 import fastapi
