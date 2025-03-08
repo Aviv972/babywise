@@ -11,6 +11,7 @@ provides proper error handling for the serverless environment.
 import sys
 import os
 import logging
+import platform
 from pathlib import Path
 
 # Configure logging
@@ -20,6 +21,11 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Log Python version and environment information
+logger.info(f"Python Version: {platform.python_version()}")
+logger.info(f"Python Implementation: {platform.python_implementation()}")
+logger.info(f"System: {platform.system()} {platform.release()}")
+
 try:
     # Add the project root to the Python path
     root_dir = Path(__file__).parent.parent
@@ -27,11 +33,14 @@ try:
     logger.info(f"Added {root_dir} to Python path")
     
     # Import the FastAPI app from the backend
+    logger.info("Attempting to import FastAPI app from backend")
     from backend.api.main import app
     logger.info("Successfully imported FastAPI app from backend")
     
 except ImportError as e:
     logger.error(f"Failed to import FastAPI app: {str(e)}")
+    logger.error(f"Python path: {sys.path}")
+    
     # Provide a fallback app for error reporting
     from fastapi import FastAPI, HTTPException
     
@@ -40,7 +49,12 @@ except ImportError as e:
     @app.get("/api/health")
     async def health_check():
         """Health check endpoint that will work even if main app fails to load."""
-        return {"status": "error", "message": "Application failed to initialize properly"}
+        return {
+            "status": "error", 
+            "message": "Application failed to initialize properly",
+            "python_version": platform.python_version(),
+            "system": f"{platform.system()} {platform.release()}"
+        }
     
     @app.get("/api/{path:path}")
     async def error_response(path: str):
