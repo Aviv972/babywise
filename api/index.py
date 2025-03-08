@@ -2,17 +2,38 @@ import sys
 import os
 import logging
 import asyncio
+import traceback
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from datetime import datetime
 
 # Configure logging
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
 logger = logging.getLogger("vercel_app")
 
 # Add the parent directory to sys.path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+# Log environment info
+python_version = sys.version
+current_dir = os.getcwd()
+dir_contents = os.listdir()
+logger.info(f"Python version: {python_version}")
+logger.info(f"Current directory: {current_dir}")
+logger.info(f"Directory contents: {dir_contents}")
+
+# Check for Redis URL
+redis_url = os.getenv("STORAGE_URL")
+if redis_url:
+    # Mask credentials for logging
+    masked_url = redis_url.replace(redis_url.split('@')[0], '***:***@')
+    logger.info(f"Redis URL found: {masked_url}")
+else:
+    logger.warning("Redis URL not found in environment variables")
 
 # Create FastAPI app
 app = FastAPI(
@@ -30,23 +51,16 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Log environment info
-python_version = sys.version
-current_dir = os.getcwd()
-dir_contents = os.listdir()
-logger.info(f"Python version: {python_version}")
-logger.info(f"Current directory: {current_dir}")
-logger.info(f"Directory contents: {dir_contents}")
-
 # Initialize service status
 redis_status = False
 db_status = False
 workflow_status = False
 initialization_complete = False
+initialization_error = None
 
 # Async initialization function with timeout
 async def initialize_services():
-    global redis_status, db_status, workflow_status, initialization_complete
+    global redis_status, db_status, workflow_status, initialization_complete, initialization_error
     
     try:
         # Initialize Redis with timeout
@@ -60,7 +74,8 @@ async def initialize_services():
             logger.warning("Redis initialization timed out after 5 seconds")
             redis_status = False
         except Exception as e:
-            logger.error(f"Redis initialization error: {str(e)}", exc_info=True)
+            logger.error(f"Redis initialization error: {str(e)}")
+            logger.error(traceback.format_exc())
             redis_status = False
     
         # Initialize database
@@ -70,7 +85,8 @@ async def initialize_services():
             db_status = check_db_connection()
             logger.info(f"Database initialization {'successful' if db_status else 'failed'}")
         except Exception as e:
-            logger.error(f"Database initialization error: {str(e)}", exc_info=True)
+            logger.error(f"Database initialization error: {str(e)}")
+            logger.error(traceback.format_exc())
             db_status = False
     
         # Initialize workflow
@@ -84,11 +100,14 @@ async def initialize_services():
             logger.warning("Workflow initialization timed out after 5 seconds")
             workflow_status = False
         except Exception as e:
-            logger.error(f"Workflow initialization error: {str(e)}", exc_info=True)
+            logger.error(f"Workflow initialization error: {str(e)}")
+            logger.error(traceback.format_exc())
             workflow_status = False
     
     except Exception as e:
-        logger.error(f"Overall initialization error: {str(e)}", exc_info=True)
+        logger.error(f"Overall initialization error: {str(e)}")
+        logger.error(traceback.format_exc())
+        initialization_error = str(e)
     
     # Mark initialization as complete regardless of success/failure
     initialization_complete = True
@@ -102,10 +121,15 @@ async def health_check():
         "status": "ok" if redis_status and db_status and workflow_status else "degraded",
         "timestamp": datetime.now().isoformat(),
         "initialization_complete": initialization_complete,
+        "initialization_error": initialization_error,
         "services": {
             "redis": "connected" if redis_status else "disconnected",
             "database": "connected" if db_status else "disconnected",
             "workflow": "initialized" if workflow_status else "uninitialized"
+        },
+        "environment": {
+            "python_version": python_version,
+            "redis_url_configured": redis_url is not None
         }
     })
 
@@ -117,9 +141,11 @@ async def root():
         "status": "ok",
         "message": "Babywise API is running",
         "initialization_complete": initialization_complete,
+        "initialization_error": initialization_error,
         "environment": {
             "python_version": python_version,
             "current_directory": current_dir,
+            "redis_url_configured": redis_url is not None,
             "services": {
                 "redis": "connected" if redis_status else "disconnected",
                 "database": "connected" if db_status else "disconnected",
@@ -128,11 +154,63 @@ async def root():
         }
     }
 
+# Test Redis connection directly
+@app.get("/api/test-redis")
+async def test_redis():
+    """Test Redis connection directly"""
+    try:
+        import aioredis
+        
+        # Get Redis URL from environment
+        redis_url = os.getenv("STORAGE_URL")
+        if not redis_url:
+            return {"status": "error", "message": "Redis URL not found in environment variables"}
+        
+        # Log Redis connection attempt (without exposing credentials)
+        masked_url = redis_url.replace(redis_url.split('@')[0], '***:***@')
+        logger.info(f"Test endpoint: Attempting to connect to Redis at {masked_url}")
+        
+        # Use asyncio.wait_for to add a timeout
+        start_time = datetime.now()
+        redis_client = await asyncio.wait_for(
+            aioredis.from_url(redis_url, socket_timeout=5.0),
+            timeout=5.0
+        )
+        
+        # Test connection by pinging Redis
+        ping_result = await asyncio.wait_for(redis_client.ping(), timeout=2.0)
+        
+        # Test basic operations
+        await redis_client.set("test_key", "test_value", ex=60)
+        value = await redis_client.get("test_key")
+        
+        # Close connection
+        await redis_client.close()
+        
+        end_time = datetime.now()
+        duration = (end_time - start_time).total_seconds()
+        
+        return {
+            "status": "success",
+            "ping_result": ping_result,
+            "test_value": value.decode() if value else None,
+            "duration_seconds": duration
+        }
+        
+    except asyncio.TimeoutError as e:
+        logger.error(f"Redis test timeout: {str(e)}")
+        return {"status": "error", "message": f"Redis connection timed out: {str(e)}"}
+    except Exception as e:
+        logger.error(f"Redis test error: {str(e)}")
+        logger.error(traceback.format_exc())
+        return {"status": "error", "message": f"Error connecting to Redis: {str(e)}"}
+
 # Global exception handler
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
     """Global exception handler"""
-    logger.error(f"Unhandled exception: {str(exc)}", exc_info=True)
+    logger.error(f"Unhandled exception: {str(exc)}")
+    logger.error(traceback.format_exc())
     return JSONResponse(
         status_code=500,
         content={"status": "error", "message": str(exc)}
@@ -144,14 +222,16 @@ try:
     app.include_router(chat_router, prefix="/api/chat", tags=["chat"])
     logger.info("Chat router initialized successfully")
 except Exception as e:
-    logger.error(f"Failed to initialize chat router: {str(e)}", exc_info=True)
+    logger.error(f"Failed to initialize chat router: {str(e)}")
+    logger.error(traceback.format_exc())
 
 try:
     from backend.api.routines import router as routines_router
     app.include_router(routines_router, prefix="/api/routines", tags=["routines"])
     logger.info("Routines router initialized successfully")
 except Exception as e:
-    logger.error(f"Failed to initialize routines router: {str(e)}", exc_info=True)
+    logger.error(f"Failed to initialize routines router: {str(e)}")
+    logger.error(traceback.format_exc())
 
 # Startup event to initialize services
 @app.on_event("startup")
