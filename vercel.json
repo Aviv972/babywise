@@ -21,6 +21,9 @@
         "PYTHONUNBUFFERED": "1",
         "STORAGE_URL": "redis://default:SKNzsYzhLZ3eInH78gk7EWYEtIlRf4fd@redis-10101.c135.eu-central-1-1.ec2.redns.redis-cloud.com:10101"
     },
-    "buildCommand": "pip install -r requirements.txt",
-    "installCommand": "pip install --upgrade pip"
+    "build": {
+        "env": {
+            "PIP_DISABLE_PIP_VERSION_CHECK": "1"
+        }
+    }
 } 
