@@ -10,10 +10,12 @@ import os
 from typing import Dict, Any, Optional
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, FileResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from dotenv import load_dotenv
 import pathlib
+from datetime import datetime
 
 # Load environment variables from .env file
 # Try multiple possible locations for the .env file
@@ -37,6 +39,7 @@ if 'OPENAI_API_KEY' not in os.environ or not os.environ['OPENAI_API_KEY']:
 
 from backend.services.chat_service import process_chat, get_thread_context, reset_thread_state
 from backend.api.routine_endpoints import router as routine_router
+from backend.services.redis_service import ensure_redis_initialized
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -52,11 +55,15 @@ app = FastAPI(
 # Add CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # For production, specify actual origins
+    allow_origins=["*", "null", "file://"],  # Allow null and file origins for local file access
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Mount static files
+frontend_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "frontend")
+app.mount("/static", StaticFiles(directory=frontend_dir), name="static")
 
 # Pydantic models
 class ChatRequest(BaseModel):
@@ -106,7 +113,7 @@ async def handle_chat(request: ChatRequest):
 async def handle_get_context(thread_id: str):
     """Get the current context for a thread"""
     try:
-        result = get_thread_context(thread_id)
+        result = await get_thread_context(thread_id)
         return result
     except Exception as e:
         logger.error(f"Error getting context: {str(e)}", exc_info=True)
@@ -117,7 +124,7 @@ async def handle_get_context(thread_id: str):
 async def handle_reset_thread(thread_id: str):
     """Reset a thread's state"""
     try:
-        result = reset_thread_state(thread_id)
+        result = await reset_thread_state(thread_id)
         return result
     except Exception as e:
         logger.error(f"Error resetting thread: {str(e)}", exc_info=True)
@@ -126,97 +133,31 @@ async def handle_reset_thread(thread_id: str):
 # Health check endpoint
 @app.get("/health")
 async def health_check():
-    """Health check endpoint"""
-    return {"status": "ok"}
+    """Health check endpoint that verifies API and Redis connectivity"""
+    try:
+        # Check Redis connectivity
+        redis_status = await ensure_redis_initialized()
+        
+        return {
+            "status": "ok",
+            "redis": "connected" if redis_status else "disconnected",
+            "timestamp": datetime.now().isoformat()
+        }
+    except Exception as e:
+        logger.error(f"Health check error: {str(e)}", exc_info=True)
+        return {
+            "status": "degraded",
+            "error": str(e),
+            "redis": "error",
+            "timestamp": datetime.now().isoformat()
+        }
 
-# Root path - serve a simple HTML page
+# Serve frontend HTML
 @app.get("/", response_class=HTMLResponse)
-async def root():
-    """Root path - serve a simple HTML page"""
-    html_content = """
-    <!DOCTYPE html>
-    <html>
-    <head>
-        <title>Babywise Chatbot API</title>
-        <style>
-            body {
-                font-family: Arial, sans-serif;
-                max-width: 800px;
-                margin: 0 auto;
-                padding: 20px;
-                line-height: 1.6;
-            }
-            h1 {
-                color: #2c3e50;
-                border-bottom: 1px solid #eee;
-                padding-bottom: 10px;
-            }
-            h2 {
-                color: #3498db;
-                margin-top: 30px;
-            }
-            .endpoint {
-                background-color: #f8f9fa;
-                border-left: 4px solid #3498db;
-                padding: 10px 15px;
-                margin: 15px 0;
-            }
-            code {
-                background-color: #f1f1f1;
-                padding: 2px 5px;
-                border-radius: 3px;
-                font-family: monospace;
-            }
-        </style>
-    </head>
-    <body>
-        <h1>Babywise Chatbot API</h1>
-        <p>Welcome to the Babywise Chatbot API. This service provides baby care advice and routine tracking functionality.</p>
-        
-        <h2>Available Endpoints</h2>
-        
-        <div class="endpoint">
-            <h3>POST /chat</h3>
-            <p>Send a message to the chatbot and receive a response.</p>
-            <p>Example request:</p>
-            <code>
-                curl -X POST http://localhost:8000/chat -H "Content-Type: application/json" -d '{"message": "Hello, my baby is 3 months old", "thread_id": "test123"}'
-            </code>
-        </div>
-        
-        <div class="endpoint">
-            <h3>POST /reset</h3>
-            <p>Reset a conversation thread.</p>
-            <p>Example request:</p>
-            <code>
-                curl -X POST http://localhost:8000/reset -H "Content-Type: application/json" -d '{"thread_id": "test123"}'
-            </code>
-        </div>
-        
-        <div class="endpoint">
-            <h3>GET /context/{thread_id}</h3>
-            <p>Get the current context for a thread.</p>
-            <p>Example request:</p>
-            <code>
-                curl http://localhost:8000/context/test123
-            </code>
-        </div>
-        
-        <div class="endpoint">
-            <h3>GET /health</h3>
-            <p>Health check endpoint.</p>
-            <p>Example request:</p>
-            <code>
-                curl http://localhost:8000/health
-            </code>
-        </div>
-        
-        <h2>API Status</h2>
-        <p>The API is currently running and ready to accept requests.</p>
-    </body>
-    </html>
-    """
-    return html_content
+async def serve_frontend():
+    """Serve the frontend HTML file"""
+    html_path = os.path.join(frontend_dir, "index.html")
+    return FileResponse(html_path)
 
 # Add debug endpoint for command detection
 @app.post("/debug/detect-command")

@@ -11,7 +11,7 @@ import json
 import logging
 from typing import Dict, Any, List, Optional, Set
 from datetime import datetime
-from langchain_core.messages import HumanMessage
+from backend.models.message_types import HumanMessage
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -73,7 +73,7 @@ CONTEXT_PATTERNS = {
    ]
 }
 
-def extract_context(state: Dict[str, Any]) -> Dict[str, Any]:
+async def extract_context(state: Dict[str, Any]) -> Dict[str, Any]:
    """Extract context from the conversation history"""
    try:
        logger.info("Starting extract_context function")

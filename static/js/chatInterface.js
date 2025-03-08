@@ -10,7 +10,7 @@
 
 // Configuration
 const CONFIG = {
-    apiUrl: 'http://localhost:8000',
+    apiUrl: 'http://localhost:8080',
     debugMode: false,
     defaultLanguage: 'en'
 };

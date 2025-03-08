@@ -214,4 +214,137 @@ The Babywise Chatbot not only offers conversational advice but also includes a B
 ##### Time Formats Supported:
 - Both 12-hour (e.g., 8:30pm, 8:30 PM) and 24-hour (e.g., 20:30) formats.
 - Allow shorthand times like 8pm or 14:30.
-- Default to the current day when only a time is provided, using the browser's timezone. 
+- Default to the current day when only a time is provided, using the browser's timezone.
+
+### Sleep Duration Calculation Logic
+The Routine Tracker implements a specialized algorithm for calculating sleep durations that handles overlapping sleep events intelligently:
+
+#### Overlapping Sleep Events Handling:
+- When multiple sleep events are recorded for the same time period (e.g., if a parent logs sleep twice), the system intelligently merges these events to avoid double-counting sleep time.
+- The algorithm identifies the earliest sleep start time and the latest sleep end time within a set of potentially overlapping events.
+- Sleep duration is calculated as the time between the earliest start and the latest end, ensuring accurate tracking for a single baby.
+
+#### Sleep Event Pairing:
+- Sleep events (start) are automatically paired with sleep_end events to calculate durations.
+- The system uses a SQL Common Table Expression (CTE) to efficiently join sleep events with their corresponding end events.
+- When multiple sleep events share the same end event, the system correctly attributes the end time to each sleep event while avoiding duration double-counting in summaries.
+
+#### Duration Calculation:
+- For summary reports, the system calculates the total sleep duration by finding the span from the earliest sleep start to the latest sleep end.
+- This approach ensures that overlapping or redundant sleep entries don't artificially inflate the total sleep time.
+- The implementation handles edge cases such as missing end times by using the next available sleep_end event.
+
+This intelligent sleep duration calculation ensures that parents receive accurate sleep statistics even when they record multiple entries for the same sleep session, providing a more reliable picture of their baby's sleep patterns.
+
+## 8. Redis Implementation for Cloud Deployment
+
+### Overview
+To support cloud deployment on platforms like Vercel and enable persistent chat history and event tracking across serverless functions, the Babywise Assistant implements Redis as a distributed cache and persistence layer. This implementation ensures that conversation context and baby routine data remain accessible across different serverless function invocations.
+
+### Redis Service Architecture
+The Redis implementation is structured around a service-oriented architecture with the following components:
+
+#### Redis Connection Management
+- **Singleton Connection**: A global Redis client instance is maintained to optimize connection pooling.
+- **Asynchronous Operations**: All Redis operations are implemented using `aioredis` for non-blocking I/O.
+- **Connection Resilience**: The service includes automatic reconnection and error handling for robust operation.
+
+#### Key Data Structures
+The Redis implementation uses several key data structures:
+
+1. **Chat History and Context**:
+   - Thread-specific conversation history stored as serialized JSON.
+   - Context information (baby details, preferences) cached with appropriate TTL.
+   - LangGraph state persistence for maintaining workflow continuity.
+
+2. **Routine Tracking Data**:
+   - Active routine events (e.g., ongoing sleep sessions).
+   - Recent events cache for quick access to frequently queried data.
+   - Summary data with aggregated statistics for daily/weekly reports.
+
+3. **System Configuration**:
+   - Feature flags and system settings.
+   - Caching of prompt templates and domain-specific instructions.
+
+#### Key Prefixes and Expiration Policies
+The implementation uses a structured key naming convention:
+
+- `routine_summary:{thread_id}:{period}` - Cached summary reports (1 hour TTL)
+- `recent_events:{thread_id}:{event_type}` - Recent events by type (30 minutes TTL)
+- `active_routine:{thread_id}:{event_type}` - Currently active events (2 hours TTL)
+- `chat_context:{thread_id}` - Conversation context and state (24 hours TTL)
+- `workflow_state:{thread_id}` - LangGraph workflow state (24 hours TTL)
+
+### Integration with Vercel Deployment
+The Redis implementation is specifically designed to work with Vercel's serverless architecture:
+
+#### Environment Configuration
+- Redis connection URL stored in Vercel environment variables.
+- Automatic detection of deployment environment (development/production).
+- Connection pooling optimized for serverless function execution.
+
+#### Serverless Function Optimization
+- Lightweight connection management to minimize cold start times.
+- Efficient serialization/deserialization of state data.
+- Graceful degradation when Redis is temporarily unavailable.
+
+#### Data Synchronization
+- Client-side caching with server reconciliation for offline support.
+- Optimistic updates with background synchronization.
+- Conflict resolution for concurrent updates.
+
+### Implementation Benefits
+The Redis implementation provides several key benefits:
+
+1. **Persistence Across Serverless Invocations**: Maintains conversation context and user data between different function executions.
+2. **Improved Performance**: Caches frequently accessed data to reduce database load and API response times.
+3. **Scalability**: Supports horizontal scaling of the application across multiple serverless instances.
+4. **Offline Resilience**: Enables the application to function with degraded capabilities even when temporarily disconnected.
+5. **Deployment Flexibility**: Allows the application to be deployed on serverless platforms without sacrificing stateful features.
+
+### Usage in the Application
+The Redis service is integrated throughout the application:
+
+- **Workflow State Management**: LangGraph states are persisted in Redis instead of in-memory storage.
+- **Routine Tracking**: Event data is cached for quick access and synchronized with the primary database.
+- **Chat Context**: User conversation history and extracted context are maintained across sessions.
+
+## 9. Asynchronous Workflow Implementation
+
+### Overview
+The Babywise Assistant uses an asynchronous workflow architecture to handle concurrent requests efficiently and provide responsive user experiences, especially in cloud environments. The workflow is built using LangGraph with async/await patterns throughout the codebase.
+
+### Workflow Node Architecture
+Each workflow node is implemented as an asynchronous function:
+
+1. **process_input**: Handles initial message processing and command detection
+2. **extract_context**: Extracts relevant context from conversation history
+3. **select_domain**: Determines the appropriate domain for the query
+4. **generate_response**: Creates the AI response based on context and domain
+5. **post_process**: Performs final processing on the response
+
+### Async Implementation Details
+The workflow implementation includes several key async features:
+
+- **Consistent Async Signatures**: All workflow nodes use the `async def` signature for compatibility
+- **Awaitable Node Execution**: The workflow runner properly awaits each node's execution
+- **Redis Integration**: All Redis operations use async I/O for non-blocking performance
+- **Error Handling**: Comprehensive try/except blocks with async-aware error handling
+- **Health Monitoring**: Enhanced health endpoint that checks Redis connectivity
+
+### Production Readiness Improvements
+Several improvements have been made to ensure production readiness:
+
+1. **Fixed Async Inconsistencies**: Resolved issues where sync functions were being awaited
+2. **Enhanced Health Endpoint**: Added Redis connectivity check to the health endpoint
+3. **Improved Error Logging**: Comprehensive error logging throughout the workflow
+4. **Graceful Degradation**: System continues to function with reduced capabilities when Redis is unavailable
+5. **Vercel Deployment Optimizations**: Minimized cold start times and optimized for serverless execution
+
+### Testing Considerations
+When testing the async workflow:
+
+- Use `asyncio.run()` to properly execute async test functions
+- Test both the happy path and error conditions
+- Verify Redis connectivity and fallback behavior
+- Check for proper async/await patterns throughout the codebase 

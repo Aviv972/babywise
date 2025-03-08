@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Feeding Event Test</title>
+    <style>
+        .test-case {
+            margin: 10px;
+            padding: 10px;
+            border: 1px solid #ccc;
+        }
+        .result {
+            margin-top: 5px;
+            padding: 5px;
+            background-color: #f0f0f0;
+        }
+        .pass {
+            color: green;
+        }
+        .fail {
+            color: red;
+        }
+    </style>
+</head>
+<body>
+    <h1>Feeding Event Detection Test</h1>
+    <div id="test-results"></div>
+
+    <script src="script.js"></script>
+    <script>
+        // Test cases
+        const testCases = [
+            // Should be detected as feeding events
+            { input: "Fed at 2:30 PM", expectFeeding: true },
+            { input: "האכלתי ב-14:30", expectFeeding: true },
+            { input: "Gave bottle at 8am", expectFeeding: true },
+            { input: "Nursed at 10:15", expectFeeding: true },
+            { input: "נתתי בקבוק ב-16:00", expectFeeding: true },
+            
+            // Should not be detected as feeding events (questions)
+            { input: "When should I feed my baby?", expectFeeding: false },
+            { input: "How often should I feed?", expectFeeding: false },
+            { input: "מתי להאכיל את התינוק?", expectFeeding: false },
+            { input: "כמה פעמים ביום צריך להאכיל?", expectFeeding: false },
+            
+            // Ambiguous cases (should not be detected)
+            { input: "Baby is feeding", expectFeeding: false },
+            { input: "Started feeding", expectFeeding: false },
+            { input: "התינוק אוכל", expectFeeding: false },
+            
+            // Cross-feature cases
+            { input: "Baby slept at 8pm", expectFeeding: false },
+            { input: "Fed at 2pm and then slept", expectFeeding: true },
+            { input: "התינוק נרדם ב-20:00", expectFeeding: false },
+            { input: "האכלתי ב-14:00 ואז נרדם", expectFeeding: true }
+        ];
+
+        // Run tests
+        function runTests() {
+            const resultsDiv = document.getElementById('test-results');
+            let passCount = 0;
+
+            testCases.forEach((test, index) => {
+                const feedingCheck = isFeedingEventWithTime(test.input);
+                const isFeeding = feedingCheck.isFeeding && feedingCheck.hasTime && !feedingCheck.isQuestion;
+                const passed = isFeeding === test.expectFeeding;
+                
+                if (passed) passCount++;
+
+                const testDiv = document.createElement('div');
+                testDiv.className = 'test-case';
+                testDiv.innerHTML = `
+                    <strong>Test ${index + 1}:</strong> "${test.input}"<br>
+                    Expected: ${test.expectFeeding ? 'Feeding Event' : 'Not Feeding Event'}<br>
+                    Got: ${isFeeding ? 'Feeding Event' : 'Not Feeding Event'}<br>
+                    <div class="result ${passed ? 'pass' : 'fail'}">
+                        ${passed ? 'PASS' : 'FAIL'}
+                    </div>
+                    Details:<br>
+                    - Has Time: ${feedingCheck.hasTime}<br>
+                    - Is Feeding Action: ${feedingCheck.isFeeding}<br>
+                    - Is Question: ${feedingCheck.isQuestion}
+                `;
+                
+                resultsDiv.appendChild(testDiv);
+            });
+
+            const summary = document.createElement('div');
+            summary.innerHTML = `<h2>Summary: ${passCount}/${testCases.length} tests passed</h2>`;
+            resultsDiv.insertBefore(summary, resultsDiv.firstChild);
+        }
+
+        // Run tests when page loads
+        window.onload = runTests;
+    </script>
+</body>
+</html> 

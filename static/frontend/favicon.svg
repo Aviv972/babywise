@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+  <!-- Baby head -->
+  <circle cx="50" cy="50" r="45" fill="#FFE0B2"/>
+  
+  <!-- Baby hair -->
+  <path d="M50 5c-20 0-35 10-40 20 5-8 20-15 40-15s35 7 40 15c-5-10-20-20-40-20z" fill="#8D6E63"/>
+  
+  <!-- Baby eyes -->
+  <ellipse cx="35" cy="40" rx="7" ry="5" fill="#4E342E"/>
+  <ellipse cx="65" cy="40" rx="7" ry="5" fill="#4E342E"/>
+  
+  <!-- Eye highlights -->
+  <circle cx="37" cy="38" r="2" fill="#FFFFFF"/>
+  <circle cx="67" cy="38" r="2" fill="#FFFFFF"/>
+  
+  <!-- Baby cheeks -->
+  <circle cx="30" cy="55" r="8" fill="#FFCDD2" opacity="0.6"/>
+  <circle cx="70" cy="55" r="8" fill="#FFCDD2" opacity="0.6"/>
+  
+  <!-- Baby nose -->
+  <path d="M50 45 Q 53 50, 50 55 Q 47 50, 50 45" fill="#FFCDD2"/>
+  
+  <!-- Baby mouth -->
+  <path d="M40 65 Q 50 75, 60 65" fill="none" stroke="#D32F2F" stroke-width="2.5" stroke-linecap="round"/>
+  
+  <!-- Baby pacifier (optional) -->
+  <circle cx="50" cy="80" r="8" fill="#3D8C6F" opacity="0.8"/>
+  <circle cx="50" cy="80" r="4" fill="#FFFFFF" opacity="0.8"/>
+</svg> 

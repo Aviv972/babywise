@@ -94,10 +94,7 @@ SUMMARY_PATTERNS_HE = [
     r'(?:מה|איך)\s+(?:היה|היו|היתה)\s+(?:ה)?(?:שגרה|שינה|האכלה|אירועים)\s+(?:של\s+)?(?:התינוק|הילד)?\s*(?:היום|השבוע|החודש)',
     r'(?:סיכום|דוח|סקירה|נתונים|סטטיסטיקה)\s+(?:של\s+)?(?:היום|השבוע|החודש)',
     r'(?:היום|השבוע|החודש)(?:\'ה)?\s+(?:סיכום|דוח|סקירה|נתונים|סטטיסטיקה)',
-    r'סיכום\s+(?:יום|שבוע|חודש)',
-    r'^סיכום יום$',
-    r'^סיכום שבוע$',
-    r'^סיכום חודש$'
+    r'סיכום\s+(?:יום|שבוע|חודש)'
 ]
 
 HELP_PATTERNS_HE = [
@@ -208,30 +205,11 @@ def detect_command(message: str) -> Optional[Dict[str, Any]]:
     
     # First check if it's a summary request to avoid misinterpreting as an event
     for pattern in summary_patterns:
-        match = re.search(pattern, message_lower)
-        if match:
+        if re.search(pattern, message_lower):
             logger.info(f"Detected summary command: '{message_lower}'")
-            
-            # Determine period from the message
-            period = "day"  # Default to day
-            
-            # Check for specific period indicators in Hebrew
-            if is_hebrew:
-                if "שבוע" in message_lower:
-                    period = "week"
-                elif "חודש" in message_lower:
-                    period = "month"
-                # The default is already "day" for "יום" or no specific period
-            else:
-                if "week" in message_lower:
-                    period = "week"
-                elif "month" in message_lower:
-                    period = "month"
-                # The default is already "day" for "today" or no specific period
-            
             return {
                 "command_type": "summary",
-                "period": period,
+                "period": "day",  # Default to day, can be refined
                 "language": language
             }
     
@@ -288,7 +266,7 @@ def detect_command(message: str) -> Optional[Dict[str, Any]]:
                 logger.info(f"Detected feed start command: '{match.group(0)}' with time {parsed_time}")
                 return {
                     "command_type": "event",
-                    "event_type": "feed",
+                    "event_type": "feeding",
                     "action": "start",
                     "time": parsed_time,
                     "original_text": match.group(0),
@@ -305,7 +283,7 @@ def detect_command(message: str) -> Optional[Dict[str, Any]]:
                 logger.info(f"Detected feed end command: '{match.group(0)}' with time {parsed_time}")
                 return {
                     "command_type": "event",
-                    "event_type": "feed",
+                    "event_type": "feeding",
                     "action": "end",
                     "time": parsed_time,
                     "original_text": match.group(0),
@@ -404,19 +382,43 @@ def format_summary_response(summary: Dict[str, Any]) -> str:
             return f"Sorry, I couldn't generate a summary: {summary['error']}"
     
     period = summary["period"]
-    start_date = summary["start_date"].strftime("%A, %B %d")
+    # Handle both string and datetime objects for start_date
+    if isinstance(summary["start_date"], str):
+        try:
+            # Try to parse the string as a datetime
+            start_date_obj = datetime.fromisoformat(summary["start_date"])
+            start_date = start_date_obj.strftime("%A, %B %d")
+        except ValueError:
+            # If parsing fails, use the string as is
+            start_date = summary["start_date"]
+    else:
+        # If it's already a datetime object
+        start_date = summary["start_date"].strftime("%A, %B %d")
+    
+    # Get routines data
+    routines = summary.get("routines", {})
     
     # Format sleep summary
-    sleep_data = summary["sleep"]
-    sleep_count = sleep_data["total_events"]
-    sleep_total = sleep_data["total_duration_minutes"]
-    sleep_avg = sleep_data["average_duration_minutes"]
+    sleep_data = routines.get("sleep", {})
+    sleep_count = sleep_data.get("total_events", 0)
     
-    # Format feed summary
-    feed_data = summary["feed"]
-    feed_count = feed_data["total_events"]
-    feed_total = feed_data["total_duration_minutes"]
-    feed_avg = feed_data["average_duration_minutes"]
+    # Convert hours to minutes for consistency
+    sleep_total_hours = sleep_data.get("total_duration", 0)
+    sleep_total = sleep_total_hours * 60  # Convert hours to minutes
+    
+    sleep_avg_hours = sleep_data.get("average_duration", 0)
+    sleep_avg = sleep_avg_hours * 60  # Convert hours to minutes
+    
+    # Format feed summary - use "feeding" instead of "feed" to match database
+    feed_data = routines.get("feeding", {})
+    feed_count = feed_data.get("total_events", 0)
+    
+    # Convert hours to minutes for consistency
+    feed_total_hours = feed_data.get("total_duration", 0)
+    feed_total = feed_total_hours * 60  # Convert hours to minutes
+    
+    feed_avg_hours = feed_data.get("average_duration", 0)
+    feed_avg = feed_avg_hours * 60  # Convert hours to minutes
     
     # Build the response based on language
     if language == "he":
@@ -443,28 +445,58 @@ def format_summary_response(summary: Dict[str, Any]) -> str:
                 else:
                     response += f"- משך שינה ממוצע: {avg_minutes}ד\n"
             
-            # List recent sleep events (limit to 5)
-            if sleep_data["events"]:
-                response += "\nמפגשי שינה אחרונים:\n"
-                # Sort events by start time to ensure most recent are shown
-                sorted_events = sorted(sleep_data["events"], key=lambda x: x["start_time"])
-                for event in sorted_events[-5:]:
-                    start_time = event["start_time"].strftime("%I:%M %p")
-                    if event["end_time"]:
-                        end_time = event["end_time"].strftime("%I:%M %p")
-                        duration_mins = event["duration_minutes"]
-                        hours, mins = divmod(int(duration_mins), 60)
-                        if hours > 0:
-                            duration = f"{hours}ש {mins}ד"
-                        else:
-                            duration = f"{mins}ד"
-                        response += f"- {start_time} עד {end_time} ({duration})\n"
+            # Show latest sleep event if available
+            latest_event = sleep_data.get("latest_event")
+            if latest_event:
+                response += "\nמפגש שינה אחרון:\n"
+                start_time_str = latest_event["start_time"]
+                if isinstance(start_time_str, str):
+                    try:
+                        start_time = datetime.fromisoformat(start_time_str).strftime("%I:%M %p")
+                    except ValueError:
+                        # Handle potential format issues
+                        start_time = start_time_str
+                else:
+                    start_time = start_time_str.strftime("%I:%M %p")
+                
+                end_time_str = latest_event.get("end_time")
+                if end_time_str:
+                    if isinstance(end_time_str, str):
+                        try:
+                            end_time = datetime.fromisoformat(end_time_str).strftime("%I:%M %p")
+                        except ValueError:
+                            # Handle potential format issues
+                            end_time = end_time_str
                     else:
-                        response += f"- התחיל ב-{start_time} (ממשיך)\n"
+                        end_time = end_time_str.strftime("%I:%M %p")
+                    
+                    # Calculate duration
+                    if isinstance(start_time_str, str) and isinstance(end_time_str, str):
+                        try:
+                            start_dt = datetime.fromisoformat(start_time_str)
+                            end_dt = datetime.fromisoformat(end_time_str)
+                            duration_mins = (end_dt - start_dt).total_seconds() / 60
+                        except ValueError:
+                            # If parsing fails, use the total duration from summary
+                            duration_mins = sleep_total
+                    else:
+                        if isinstance(start_time_str, datetime) and isinstance(end_time_str, datetime):
+                            duration_mins = (end_time_str - start_time_str).total_seconds() / 60
+                        else:
+                            duration_mins = sleep_total
+                    
+                    hours, mins = divmod(int(duration_mins), 60)
+                    if hours > 0:
+                        duration = f"{hours}ש {mins}ד"
+                    else:
+                        duration = f"{mins}ד"
+                    response += f"- {start_time} עד {end_time} ({duration})\n"
+                else:
+                    response += f"- התחיל ב-{start_time} (ממשיך)\n"
         else:
             response += "- לא נרשמו מפגשי שינה לתקופה זו.\n"
         
-        # Feed section
+        # Feed section - use "feeding" instead of "feed"
         response += "\n**האכלה:**\n"
         if feed_count > 0:
             response += f"- סך הכל מפגשי האכלה: {feed_count}\n"
@@ -478,23 +510,55 @@ def format_summary_response(summary: Dict[str, Any]) -> str:
                 avg_minutes = int(feed_avg)
                 response += f"- משך האכלה ממוצע: {avg_minutes}ד\n"
             
-            # List recent feeding events (limit to 5)
-            if feed_data["events"]:
-                response += "\nמפגשי האכלה אחרונים:\n"
-                # Sort events by start time to ensure most recent are shown
-                sorted_events = sorted(feed_data["events"], key=lambda x: x["start_time"])
-                for event in sorted_events[-5:]:
-                    start_time = event["start_time"].strftime("%I:%M %p")
-                    if event["end_time"]:
-                        end_time = event["end_time"].strftime("%I:%M %p")
-                        duration_mins = event["duration_minutes"]
-                        response += f"- {start_time} עד {end_time} ({int(duration_mins)}ד)\n"
+            # Show latest feed event if available
+            latest_event = feed_data.get("latest_event")
+            if latest_event:
+                response += "\nמפגש האכלה אחרון:\n"
+                start_time_str = latest_event["start_time"]
+                if isinstance(start_time_str, str):
+                    try:
+                        start_time = datetime.fromisoformat(start_time_str).strftime("%I:%M %p")
+                    except ValueError:
+                        start_time = start_time_str
+                else:
+                    start_time = start_time_str.strftime("%I:%M %p")
+                
+                end_time_str = latest_event.get("end_time")
+                if end_time_str:
+                    if isinstance(end_time_str, str):
+                        try:
+                            end_time = datetime.fromisoformat(end_time_str).strftime("%I:%M %p")
+                        except ValueError:
+                            end_time = end_time_str
                     else:
-                        response += f"- התחיל ב-{start_time} (ממשיך)\n"
+                        end_time = end_time_str.strftime("%I:%M %p")
+                    
+                    # Calculate duration
+                    if isinstance(start_time_str, str) and isinstance(end_time_str, str):
+                        try:
+                            start_dt = datetime.fromisoformat(start_time_str)
+                            end_dt = datetime.fromisoformat(end_time_str)
+                            duration_mins = (end_dt - start_dt).total_seconds() / 60
+                        except ValueError:
+                            duration_mins = feed_total
+                    else:
+                        if isinstance(start_time_str, datetime) and isinstance(end_time_str, datetime):
+                            duration_mins = (end_time_str - start_time_str).total_seconds() / 60
+                        else:
+                            duration_mins = feed_total
+                    
+                    hours, mins = divmod(int(duration_mins), 60)
+                    if hours > 0:
+                        duration = f"{hours}ש {mins}ד"
+                    else:
+                        duration = f"{mins}ד"
+                    response += f"- {start_time} עד {end_time} ({duration})\n"
+                else:
+                    response += f"- התחיל ב-{start_time} (ממשיך)\n"
         else:
             response += "- לא נרשמו מפגשי האכלה לתקופה זו.\n"
     else:
-        # English response (original implementation)
+        # English response
         response = f"**Baby Routine Summary for {period}** (since {start_date})\n\n"
         
         # Sleep section
@@ -510,26 +574,55 @@ def format_summary_response(summary: Dict[str, Any]) -> str:
                 else:
                     response += f"- Average sleep duration: {avg_minutes}m\n"
             
-            # List recent sleep events (limit to 5)
-            if sleep_data["events"]:
-                response += "\nRecent sleep sessions:\n"
-                for event in sleep_data["events"][-5:]:
-                    start_time = event["start_time"].strftime("%I:%M %p")
-                    if event["end_time"]:
-                        end_time = event["end_time"].strftime("%I:%M %p")
-                        duration_mins = event["duration_minutes"]
-                        hours, mins = divmod(int(duration_mins), 60)
-                        if hours > 0:
-                            duration = f"{hours}h {mins}m"
-                        else:
-                            duration = f"{mins}m"
-                        response += f"- {start_time} to {end_time} ({duration})\n"
+            # Show latest sleep event if available
+            latest_event = sleep_data.get("latest_event")
+            if latest_event:
+                response += "\nLatest sleep session:\n"
+                start_time_str = latest_event["start_time"]
+                if isinstance(start_time_str, str):
+                    try:
+                        start_time = datetime.fromisoformat(start_time_str).strftime("%I:%M %p")
+                    except ValueError:
+                        start_time = start_time_str
+                else:
+                    start_time = start_time_str.strftime("%I:%M %p")
+                
+                end_time_str = latest_event.get("end_time")
+                if end_time_str:
+                    if isinstance(end_time_str, str):
+                        try:
+                            end_time = datetime.fromisoformat(end_time_str).strftime("%I:%M %p")
+                        except ValueError:
+                            end_time = end_time_str
                     else:
-                        response += f"- Started at {start_time} (ongoing)\n"
+                        end_time = end_time_str.strftime("%I:%M %p")
+                    
+                    # Calculate duration
+                    if isinstance(start_time_str, str) and isinstance(end_time_str, str):
+                        try:
+                            start_dt = datetime.fromisoformat(start_time_str)
+                            end_dt = datetime.fromisoformat(end_time_str)
+                            duration_mins = (end_dt - start_dt).total_seconds() / 60
+                        except ValueError:
+                            duration_mins = sleep_total
+                    else:
+                        if isinstance(start_time_str, datetime) and isinstance(end_time_str, datetime):
+                            duration_mins = (end_time_str - start_time_str).total_seconds() / 60
+                        else:
+                            duration_mins = sleep_total
+                    
+                    hours, mins = divmod(int(duration_mins), 60)
+                    if hours > 0:
+                        duration = f"{hours}h {mins}m"
+                    else:
+                        duration = f"{mins}m"
+                    response += f"- {start_time} to {end_time} ({duration})\n"
+                else:
+                    response += f"- Started at {start_time} (ongoing)\n"
         else:
             response += "- No sleep sessions recorded for this period.\n"
         
-        # Feed section
+        # Feed section - use "feeding" instead of "feed"
         response += "\n**Feeding:**\n"
         if feed_count > 0:
             response += f"- Total feeding sessions: {feed_count}\n"
@@ -543,18 +636,51 @@ def format_summary_response(summary: Dict[str, Any]) -> str:
                 avg_minutes = int(feed_avg)
                 response += f"- Average feeding duration: {avg_minutes}m\n"
             
-            # List recent feeding events (limit to 5)
-            if feed_data["events"]:
-                response += "\nRecent feeding sessions:\n"
-                for event in feed_data["events"][-5:]:
-                    start_time = event["start_time"].strftime("%I:%M %p")
-                    if event["end_time"]:
-                        end_time = event["end_time"].strftime("%I:%M %p")
-                        duration_mins = event["duration_minutes"]
-                        response += f"- {start_time} to {end_time} ({int(duration_mins)}m)\n"
+            # Show latest feed event if available
+            latest_event = feed_data.get("latest_event")
+            if latest_event:
+                response += "\nLatest feeding session:\n"
+                start_time_str = latest_event["start_time"]
+                if isinstance(start_time_str, str):
+                    try:
+                        start_time = datetime.fromisoformat(start_time_str).strftime("%I:%M %p")
+                    except ValueError:
+                        start_time = start_time_str
+                else:
+                    start_time = start_time_str.strftime("%I:%M %p")
+                
+                end_time_str = latest_event.get("end_time")
+                if end_time_str:
+                    if isinstance(end_time_str, str):
+                        try:
+                            end_time = datetime.fromisoformat(end_time_str).strftime("%I:%M %p")
+                        except ValueError:
+                            end_time = end_time_str
                     else:
-                        response += f"- Started at {start_time} (ongoing)\n"
+                        end_time = end_time_str.strftime("%I:%M %p")
+                    
+                    # Calculate duration
+                    if isinstance(start_time_str, str) and isinstance(end_time_str, str):
+                        try:
+                            start_dt = datetime.fromisoformat(start_time_str)
+                            end_dt = datetime.fromisoformat(end_time_str)
+                            duration_mins = (end_dt - start_dt).total_seconds() / 60
+                        except ValueError:
+                            duration_mins = feed_total
+                    else:
+                        if isinstance(start_time_str, datetime) and isinstance(end_time_str, datetime):
+                            duration_mins = (end_time_str - start_time_str).total_seconds() / 60
+                        else:
+                            duration_mins = feed_total
+                    
+                    hours, mins = divmod(int(duration_mins), 60)
+                    if hours > 0:
+                        duration = f"{hours}h {mins}m"
+                    else:
+                        duration = f"{mins}m"
+                    response += f"- {start_time} to {end_time} ({duration})\n"
+                else:
+                    response += f"- Started at {start_time} (ongoing)\n"
         else:
             response += "- No feeding sessions recorded for this period.\n"
-    
     return response 

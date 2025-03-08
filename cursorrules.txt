@@ -49,6 +49,13 @@
   - Docstrings for Python functions
   - JSDoc for JavaScript functions
 
+### Asynchronous Programming
+- All workflow nodes must use async/await pattern
+- Redis operations should be non-blocking using aioredis
+- Error handling should include proper async try/except blocks
+- Async function signatures must be consistent across the workflow
+- Testing async code should use asyncio.run() for proper execution
+
 ## Technology Stack
 ### Backend
 - Python 3.9+
@@ -57,6 +64,8 @@
 - OpenAI API
 - FastAPI
 - SQLite (for routine tracking)
+- Redis (for cloud deployment persistence)
+- aioredis (for asynchronous Redis operations)
 - Uvicorn (ASGI server)
 
 ### Frontend
@@ -81,6 +90,10 @@
   - Post-Process: Handles command detection and database operations
   - Command Parser: Processes natural language commands for routine tracking
 - Database Integration for Routine Tracking
+- Redis Service for Cloud Persistence:
+  - Conversation state persistence
+  - Routine data caching
+  - Cross-instance data synchronization
 - Multi-language Support (English and Hebrew)
 
 ### Frontend Components
@@ -98,6 +111,8 @@
 - Bilingual support (English and Hebrew) with proper RTL formatting
 - Baby routine tracking with natural language command processing
 - Persistent conversation history with thread management
+- Cloud deployment support with Redis-based state persistence
+- Offline capability with local storage fallback
 
 ### Routine Tracker Features
 - Natural language command detection for event logging
@@ -105,6 +120,16 @@
 - Time format flexibility (12/24 hour)
 - Summary reports (daily, weekly) with statistics
 - Event aggregation with duration calculations
+- Intelligent sleep duration calculation for overlapping events
+- Single-baby tracking with accurate sleep time reporting
+
+### Sleep Duration Calculation Rules
+- When multiple sleep events overlap, calculate duration from earliest start to latest end
+- Avoid double-counting sleep time when multiple events share the same end time
+- Pair sleep events with sleep_end events using efficient SQL queries
+- Handle edge cases like missing end times gracefully
+- Provide accurate total sleep duration in summary reports
+- Log detailed information about sleep event processing for debugging
 
 ## Accessibility Requirements
 - Responsive design for all devices (mobile, tablet, desktop)

@@ -11,9 +11,10 @@ from typing import Dict, Any, List, Optional
 from datetime import datetime, timedelta
 import re
 import requests
-from langchain_core.messages import AIMessage, HumanMessage
-from backend.workflow.command_parser import detect_command, extract_notes, get_help_text, format_summary_response
-from backend.db.routine_tracker import (
+import aiohttp
+from backend.models.message_types import AIMessage, HumanMessage
+from .command_parser import detect_command, extract_notes, get_help_text, format_summary_response
+from ..db.routine_tracker import (
     add_event, 
     update_event, 
     get_events_by_date_range, 
@@ -25,7 +26,10 @@ from backend.db.routine_tracker import (
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-def post_process(state: Dict[str, Any]) -> Dict[str, Any]:
+# API configuration
+api_url = "http://localhost:8080/api/routine/process-command"
+
+async def post_process(state: Dict[str, Any]) -> Dict[str, Any]:
     """
     Post-process the state after response generation
     
@@ -37,6 +41,8 @@ def post_process(state: Dict[str, Any]) -> Dict[str, Any]:
     """
     try:
         # Add timestamp to metadata
+        if "metadata" not in state:
+            state["metadata"] = {}
         state["metadata"]["processed_at"] = datetime.now().isoformat()
         
         # Get the latest user message
@@ -63,7 +69,6 @@ def post_process(state: Dict[str, Any]) -> Dict[str, Any]:
                     api_success = False
                     try:
                         # Use the API endpoint for command processing
-                        api_url = "http://localhost:8000/api/routine/process-command"
                         payload = {
                             "thread_id": thread_id,
                             "message": latest_user_message,
@@ -72,29 +77,29 @@ def post_process(state: Dict[str, Any]) -> Dict[str, Any]:
                         
                         logger.info(f"Calling command processing API with payload: {json.dumps(payload, default=str)}")
                         
-                        response = requests.post(api_url, json=payload, timeout=5)  # Add timeout
-                        
-                        if response.status_code == 200:
-                            result = response.json()
-                            logger.info(f"Command API response: {json.dumps(result, default=str)}")
-                            
-                            if result.get("status") == "success" and result.get("response"):
-                                # Update the state with the command response
-                                state["messages"].append(AIMessage(content=result["response"]))
-                                state["metadata"]["command_processed"] = True
-                                logger.info(f"Command processed successfully via API, response: '{result['response']}'")
-                                api_success = True
-                            else:
-                                logger.warning(f"Command API returned error: {result.get('message', 'Unknown error')}")
-                        else:
-                            logger.error(f"Command API request failed with status {response.status_code}: {response.text}")
+                        async with aiohttp.ClientSession() as session:
+                            async with session.post(api_url, json=payload) as response:
+                                if response.status == 200:
+                                    result = await response.json()
+                                    logger.info(f"Command API response: {json.dumps(result, default=str)}")
+                                    
+                                    if result.get("status") == "success" and result.get("response"):
+                                        # Update the state with the command response
+                                        state["messages"].append(AIMessage(content=result["response"]))
+                                        state["metadata"]["command_processed"] = True
+                                        logger.info(f"Command processed successfully via API, response: '{result['response']}'")
+                                        api_success = True
+                                    else:
+                                        logger.warning(f"Command API returned error: {result.get('message', 'Unknown error')}")
+                                else:
+                                    logger.error(f"Command API request failed with status {response.status}: {await response.text()}")
                     except Exception as api_error:
                         logger.error(f"Error calling command API: {str(api_error)}", exc_info=True)
                     
                     # If API call failed, process command directly
                     if not api_success:
                         logger.info("API call failed, processing command directly")
-                        command_response = process_command(command, state, latest_user_message)
+                        command_response = await process_command(command, state, latest_user_message)
                         
                         if command_response:
                             logger.info(f"Command processed with fallback, response: '{command_response}'")
@@ -123,7 +128,7 @@ def post_process(state: Dict[str, Any]) -> Dict[str, Any]:
         logger.error(f"Error in post-processing: {str(e)}", exc_info=True)
         return state
 
-def process_command(command: Dict[str, Any], state: Dict[str, Any], message: str) -> Optional[str]:
+async def process_command(command: Dict[str, Any], state: Dict[str, Any], message: str) -> Optional[str]:
     """
     Process a detected command
     
@@ -147,7 +152,7 @@ def process_command(command: Dict[str, Any], state: Dict[str, Any], message: str
             return process_event_command(command, state, message)
         elif command_type == "summary":
             logger.info(f"Calling process_summary_command for period {command.get('period', 'day')}")
-            return process_summary_command(command, thread_id, language)
+            return await process_summary_command(command, thread_id, language)
         elif command_type == "help":
             logger.info(f"Getting help text in language {language}")
             return get_help_text(language)
@@ -191,7 +196,7 @@ def process_event_command(command: Dict[str, Any], state: Dict[str, Any], messag
     auto_ended_sleep = False
     auto_ended_feed = False
     
-    if event_type == 'feed' and action == 'start':
+    if event_type == 'feeding' and action == 'start':
         # Check if there's an ongoing sleep event
         latest_sleep = get_latest_event(thread_id, 'sleep')
         logger.info(f"Latest sleep event for thread {thread_id}: {json.dumps(latest_sleep, default=str) if latest_sleep else 'None'}")
@@ -226,7 +231,7 @@ def process_event_command(command: Dict[str, Any], state: Dict[str, Any], messag
     # Auto-status management: If starting a sleep event, check for ongoing feeding
     elif event_type == 'sleep' and action == 'start':
         # Check if there's an ongoing feeding event
-        latest_feed = get_latest_event(thread_id, 'feed')
+        latest_feed = get_latest_event(thread_id, 'feeding')
         
         if latest_feed and latest_feed.get('end_time') is None:
             # Automatically end the feeding event
@@ -274,7 +279,7 @@ def process_event_command(command: Dict[str, Any], state: Dict[str, Any], messag
                     response = f"רשמתי שהתינוק הלך לישון ב-{event_time.strftime('%H:%M')}."
                     if auto_ended_feed:
                         response += f" סיימתי אוטומטית את אירוע ההאכלה הקודם."
-                else:  # feed
+                else:  # feeding
                     response = f"רשמתי שהתינוק התחיל לאכול ב-{event_time.strftime('%H:%M')}."
                     if auto_ended_sleep:
                         response += f" סיימתי אוטומטית את אירוע השינה הקודם."
@@ -283,7 +288,7 @@ def process_event_command(command: Dict[str, Any], state: Dict[str, Any], messag
                     response = f"I've logged that your baby went to sleep at {event_time.strftime('%I:%M %p')}."
                     if auto_ended_feed:
                         response += f" I've automatically ended the previous feeding event."
-                else:  # feed
+                else:  # feeding
                     response = f"I've logged that your baby started feeding at {event_time.strftime('%I:%M %p')}."
                     if auto_ended_sleep:
                         response += f" I've automatically ended the previous sleep event."
@@ -313,12 +318,12 @@ def process_event_command(command: Dict[str, Any], state: Dict[str, Any], messag
                     if language == "he":
                         if event_type == 'sleep':
                             response = f"רשמתי שהתינוק התעורר ב-{event_time.strftime('%H:%M')}. משך השינה היה {duration_minutes:.1f} דקות."
-                        else:  # feed
+                        else:  # feeding
                             response = f"רשמתי שהתינוק סיים לאכול ב-{event_time.strftime('%H:%M')}. משך ההאכלה היה {duration_minutes:.1f} דקות."
                     else:  # en
                         if event_type == 'sleep':
                             response = f"I've logged that your baby woke up at {event_time.strftime('%I:%M %p')}. The sleep duration was {duration_minutes:.1f} minutes."
-                        else:  # feed
+                        else:  # feeding
                             response = f"I've logged that your baby finished feeding at {event_time.strftime('%I:%M %p')}. The feeding duration was {duration_minutes:.1f} minutes."
                     
                     return response
@@ -374,7 +379,7 @@ def process_event_command(command: Dict[str, Any], state: Dict[str, Any], messag
                 # Assume the event started 30 minutes ago for sleep, 15 minutes ago for feeding
                 if event_type == 'sleep':
                     assumed_start_time = event_time - timedelta(minutes=30)
-                else:  # feed
+                else:  # feeding
                     assumed_start_time = event_time - timedelta(minutes=15)
                 
                 event_id = add_event(
@@ -394,12 +399,12 @@ def process_event_command(command: Dict[str, Any], state: Dict[str, Any], messag
                 if language == "he":
                     if event_type == 'sleep':
                         response = f"לא מצאתי אירוע שינה פעיל, אז יצרתי אחד חדש. רשמתי שהתינוק ישן מ-{assumed_start_time.strftime('%H:%M')} עד {event_time.strftime('%H:%M')}. משך השינה המשוער היה {duration_minutes:.1f} דקות."
-                    else:  # feed
+                    else:  # feeding
                         response = f"לא מצאתי אירוע האכלה פעיל, אז יצרתי אחד חדש. רשמתי שהתינוק אכל מ-{assumed_start_time.strftime('%H:%M')} עד {event_time.strftime('%H:%M')}. משך ההאכלה המשוער היה {duration_minutes:.1f} דקות."
                 else:  # en
                     if event_type == 'sleep':
                         response = f"I didn't find an active sleep event, so I created a new one. I've logged that your baby slept from {assumed_start_time.strftime('%I:%M %p')} to {event_time.strftime('%I:%M %p')}. The estimated sleep duration was {duration_minutes:.1f} minutes."
-                    else:  # feed
+                    else:  # feeding
                         response = f"I didn't find an active feeding event, so I created a new one. I've logged that your baby fed from {assumed_start_time.strftime('%I:%M %p')} to {event_time.strftime('%I:%M %p')}. The estimated feeding duration was {duration_minutes:.1f} minutes."
                 
                 return response
@@ -420,7 +425,7 @@ def process_event_command(command: Dict[str, Any], state: Dict[str, Any], messag
         else:
             return f"I'm sorry, I encountered an error while processing your tracking command: {str(e)}"
 
-def process_summary_command(command: Dict[str, Any], thread_id: str, language: str = "en") -> str:
+async def process_summary_command(command: Dict[str, Any], thread_id: str, language: str) -> str:
     """
     Process a summary command
     
@@ -434,11 +439,18 @@ def process_summary_command(command: Dict[str, Any], thread_id: str, language: s
     """
     period = command.get('period', 'day')
     
-    # Generate summary
-    summary = generate_summary(thread_id, period)
-    
-    # Add language to summary for formatting
-    summary["language"] = language
-    
-    # Format the summary into a readable response
-    return format_summary_response(summary) 
+    try:
+        # Generate summary - make sure to await the coroutine
+        summary = await generate_summary(thread_id, None, period)
+        
+        # Add language to summary for formatting
+        summary["language"] = language
+        
+        # Format the summary into a readable response
+        return format_summary_response(summary)
+    except Exception as e:
+        logger.error(f"Error processing summary command: {str(e)}", exc_info=True)
+        if language == "he":
+            return f"אני מצטער, נתקלתי בשגיאה בעת עיבוד פקודת הסיכום: {str(e)}"
+        else:
+            return f"I'm sorry, I encountered an error while processing your summary command: {str(e)}" 

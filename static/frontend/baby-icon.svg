@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" fill="#3D8C6F">
+  <!-- Baby head -->
+  <circle cx="256" cy="200" r="160" fill="#FFE0B2"/>
+  
+  <!-- Baby hair -->
+  <path d="M256 40c-80 0-150 40-160 100 20-40 80-80 160-80s140 40 160 80c-10-60-80-100-160-100z" fill="#8D6E63"/>
+  
+  <!-- Baby eyes -->
+  <ellipse cx="196" cy="180" rx="20" ry="15" fill="#4E342E"/>
+  <ellipse cx="316" cy="180" rx="20" ry="15" fill="#4E342E"/>
+  
+  <!-- Eye highlights -->
+  <circle cx="206" cy="175" r="6" fill="#FFFFFF"/>
+  <circle cx="326" cy="175" r="6" fill="#FFFFFF"/>
+  
+  <!-- Baby cheeks -->
+  <circle cx="176" cy="220" r="25" fill="#FFCDD2" opacity="0.6"/>
+  <circle cx="336" cy="220" r="25" fill="#FFCDD2" opacity="0.6"/>
+  
+  <!-- Baby nose -->
+  <path d="M256 200 Q 266 220, 256 230 Q 246 220, 256 200" fill="#FFCDD2"/>
+  
+  <!-- Baby mouth -->
+  <path d="M216 250 Q 256 290, 296 250" fill="none" stroke="#D32F2F" stroke-width="6" stroke-linecap="round"/>
+  
+  <!-- Baby bib -->
+  <path d="M156 320 Q 256 380, 356 320 L 356 400 Q 256 460, 156 400 Z" fill="#3D8C6F"/>
+  
+  <!-- Bib details -->
+  <path d="M256 380 L 256 420" stroke="#FFFFFF" stroke-width="4"/>
+  <path d="M226 370 L 226 410" stroke="#FFFFFF" stroke-width="4"/>
+  <path d="M286 370 L 286 410" stroke="#FFFFFF" stroke-width="4"/>
+</svg> 

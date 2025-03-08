@@ -19,31 +19,18 @@ var/
 *.egg-info/
 .installed.cfg
 *.egg
-
-# Virtual Environment
 venv/
-ENV/
-env/
+.env
 
-# IDE files
+# IDE
 .idea/
 .vscode/
 *.swp
 *.swo
 
-# OS specific files
+# OS
 .DS_Store
-.DS_Store?
-._*
-.Spotlight-V100
-.Trashes
-ehthumbs.db
 Thumbs.db
-
-# Application specific
-*.log
-.env
-backend/data/*.db
 
 # Node
 node_modules/

@@ -9,9 +9,10 @@ import json
 import logging
 from typing import Dict, Any, List, Optional, Set
 from datetime import datetime
-from langchain_core.messages import AIMessage, HumanMessage
+from backend.models.message_types import AIMessage, HumanMessage
 
 from backend.workflow.workflow import get_workflow, thread_states, memory_saver
+from backend.services.redis_service import get_thread_state, save_thread_state, delete_thread_state
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -35,17 +36,32 @@ async def process_chat(thread_id: str, message: str, language: str = "en") -> Di
         workflow = get_workflow()
         logger.info(f"Configured workflow with thread_id: {thread_id}")
         
-        # Create a human message
+        # Create a human message with our custom type
         human_message = HumanMessage(content=message)
         logger.info(f"Created human message: {message}")
         
+        # Try to get state from Redis first
+        redis_state = await get_thread_state(thread_id)
+        
         # Check if we have existing state for this thread
-        if thread_id in thread_states:
-            logger.info(f"Using existing state for thread {thread_id}")
+        if redis_state:
+            logger.info(f"Using existing state from Redis for thread {thread_id}")
+            state = redis_state
+            logger.info(f"State type: {type(state).__name__}")
+            
+            # Add the new message to the state
+            if "messages" not in state:
+                state["messages"] = []
+            state["messages"].append(human_message)
+            logger.info(f"Added human message to state, message count: {len(state['messages'])}")
+        elif thread_id in thread_states:
+            logger.info(f"Using existing state from memory for thread {thread_id}")
             state = thread_states[thread_id]
             logger.info(f"State type: {type(state).__name__}")
             
             # Add the new message to the state
+            if "messages" not in state:
+                state["messages"] = []
             state["messages"].append(human_message)
             logger.info(f"Added human message to state, message count: {len(state['messages'])}")
         else:
@@ -53,6 +69,8 @@ async def process_chat(thread_id: str, message: str, language: str = "en") -> Di
             try:
                 logger.info(f"Attempting to retrieve state from memory for thread {thread_id}")
                 state = memory_saver.get(thread_id)
+                if "messages" not in state:
+                    state["messages"] = []
                 state["messages"].append(human_message)
                 logger.info(f"Retrieved state from memory and added message, message count: {len(state['messages'])}")
             except Exception as e:
@@ -84,21 +102,29 @@ async def process_chat(thread_id: str, message: str, language: str = "en") -> Di
         
         try:
             # Configure the workflow with the thread_id for checkpointing
-            result = workflow.invoke(state, config={"configurable": {"thread_id": thread_id}})
+            workflow_instance = await get_workflow()
+            result = await workflow_instance(state)
             logger.info(f"Workflow invoke completed")
             logger.info(f"Result type: {type(result).__name__}")
             
             # Convert result to dictionary if it's not already
             result_dict = dict(result) if not isinstance(result, dict) else result
             
-            # Store the updated state
+            # Store the updated state in memory as fallback
             thread_states[thread_id] = result_dict
-            logger.info(f"Stored updated state in thread_states")
+            logger.info(f"Stored updated state in thread_states (memory)")
             
-            # Extract the assistant's response
+            # Store the updated state in Redis
+            redis_save_success = await save_thread_state(thread_id, result_dict)
+            if redis_save_success:
+                logger.info(f"Successfully stored state in Redis for thread {thread_id}")
+            else:
+                logger.warning(f"Failed to store state in Redis for thread {thread_id}")
+            
+            # Extract the assistant's response using our custom AIMessage type
             logger.info(f"Extracting assistant response from messages")
             logger.info(f"Messages count: {len(result_dict['messages'])}")
-            logger.info(f"Message types: {[msg.type for msg in result_dict['messages']]}")
+            logger.info(f"Message types: {[type(msg).__name__ for msg in result_dict['messages']]}")
             assistant_messages = [msg for msg in result_dict['messages'] if isinstance(msg, AIMessage)]
             logger.info(f"Assistant messages count: {len(assistant_messages)}")
             
@@ -144,7 +170,7 @@ async def process_chat(thread_id: str, message: str, language: str = "en") -> Di
         }
 
 
-def get_thread_context(thread_id: str) -> Dict[str, Any]:
+async def get_thread_context(thread_id: str) -> Dict[str, Any]:
     """
     Get the current context for a thread.
     
@@ -155,7 +181,16 @@ def get_thread_context(thread_id: str) -> Dict[str, Any]:
         Dict containing the context and domain
     """
     try:
-        # Check if we have existing state for this thread
+        # Try to get state from Redis first
+        redis_state = await get_thread_state(thread_id)
+        if redis_state:
+            logger.info(f"Retrieved context from Redis for thread {thread_id}")
+            return {
+                "context": redis_state["context"],
+                "domain": redis_state["domain"]
+            }
+        
+        # Check if we have existing state for this thread in memory
         if thread_id in thread_states:
             state = thread_states[thread_id]
             return {
@@ -184,7 +219,7 @@ def get_thread_context(thread_id: str) -> Dict[str, Any]:
         }
 
 
-def reset_thread_state(thread_id: str) -> Dict[str, Any]:
+async def reset_thread_state(thread_id: str) -> Dict[str, Any]:
     """
     Reset the state for a thread.
     
@@ -206,6 +241,13 @@ def reset_thread_state(thread_id: str) -> Dict[str, Any]:
             logger.info(f"Removed thread {thread_id} from memory saver")
         except Exception as e:
             logger.info(f"Could not remove thread {thread_id} from memory saver: {str(e)}")
+        
+        # Remove from Redis
+        redis_delete_success = await delete_thread_state(thread_id)
+        if redis_delete_success:
+            logger.info(f"Successfully deleted state from Redis for thread {thread_id}")
+        else:
+            logger.warning(f"Failed to delete state from Redis for thread {thread_id}")
         
         return {
             "message": f"Thread {thread_id} has been reset",

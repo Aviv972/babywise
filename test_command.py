@@ -10,7 +10,7 @@ from datetime import datetime
 
 def test_command_processing(message, thread_id="test123", language="he"):
     """Test the command processing endpoint"""
-    url = "http://localhost:8000/api/routine/process-command"
+    url = "http://localhost:8080/api/routine/process-command"
     
     payload = {
         "thread_id": thread_id,
