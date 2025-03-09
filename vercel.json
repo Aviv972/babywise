@@ -9,7 +9,9 @@
                 "maxLambdaSize": "50mb",
                 "includeFiles": [
                     "backend/**",
-                    "api/**"
+                    "api/**",
+                    "static/**",
+                    "frontend/**"
                 ],
                 "memory": 1024,
                 "maxDuration": 60,
@@ -18,10 +20,11 @@
         }
     ],
     "routes": [
-        {
-            "src": "/(.*)",
-            "dest": "api/index.py"
-        }
+        { "handle": "filesystem" },
+        { "src": "/static/(.*)", "dest": "/static/$1" },
+        { "src": "/frontend/(.*)", "dest": "/frontend/$1" },
+        { "src": "/api/?(.*)", "dest": "api/index.py" },
+        { "src": "/(.*)", "dest": "/frontend/index.html" }
     ],
     "env": {
         "PYTHONPATH": ".",
