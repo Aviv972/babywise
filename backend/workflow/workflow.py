@@ -6,7 +6,8 @@ connecting all workflow nodes and providing functions for workflow management.
 """
 
 import logging
-from typing import Dict, Any, List, Set, TypedDict
+import traceback
+from typing import Dict, Any, List, Set, TypedDict, Optional
 from datetime import datetime
 import asyncio
 from backend.models.message_types import HumanMessage, AIMessage
@@ -17,6 +18,7 @@ from backend.workflow.select_domain import select_domain
 from backend.workflow.generate_response import generate_response
 from backend.workflow.post_process import post_process
 from backend.workflow.command_processor import CommandProcessor
+from backend.services.redis_service import get_thread_state, save_thread_state
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -36,7 +38,6 @@ class GraphState(TypedDict):
 # Initialize global variables
 _workflow = None
 memory_saver = MemorySaver()
-thread_states = {}  # Dictionary to store thread states in memory
 command_processor = CommandProcessor()
 
 async def process_input(state: GraphState) -> Dict[str, Any]:
@@ -71,6 +72,7 @@ async def process_input(state: GraphState) -> Dict[str, Any]:
         return state
     except Exception as e:
         logger.error(f"Error in process_input: {str(e)}")
+        logger.error(traceback.format_exc())
         state["skip_chat"] = False
         # Add error message to state
         state["messages"].append(AIMessage(content="I apologize, but I encountered an error processing your request. Could you please try again?"))
@@ -90,16 +92,42 @@ async def create_workflow():
         return await process_input(state)
         
     async def async_extract_context(state):
-        return await extract_context(state)
+        try:
+            return await extract_context(state)
+        except Exception as e:
+            logger.error(f"Error in extract_context: {str(e)}")
+            logger.error(traceback.format_exc())
+            # Return original state if there's an error
+            return state
         
     async def async_select_domain(state):
-        return await select_domain(state)
+        try:
+            return await select_domain(state)
+        except Exception as e:
+            logger.error(f"Error in select_domain: {str(e)}")
+            logger.error(traceback.format_exc())
+            # Set a default domain if there's an error
+            state["domain"] = "general"
+            return state
         
     async def async_generate_response(state):
-        return await generate_response(state)
+        try:
+            return await generate_response(state)
+        except Exception as e:
+            logger.error(f"Error in generate_response: {str(e)}")
+            logger.error(traceback.format_exc())
+            # Add a fallback response if there's an error
+            state["messages"].append(AIMessage(content="I apologize, but I encountered an error generating a response. Could you please try again?"))
+            return state
         
     async def async_post_process(state):
-        return await post_process(state)
+        try:
+            return await post_process(state)
+        except Exception as e:
+            logger.error(f"Error in post_process: {str(e)}")
+            logger.error(traceback.format_exc())
+            # Return state as is if there's an error
+            return state
     
     # Add nodes
     workflow.add_node("process_input", async_process_input)
@@ -166,9 +194,24 @@ async def create_workflow():
                 logger.info("Skipping chat workflow, command was processed")
             
             logger.info("Workflow execution completed successfully")
+            
+            # Save the final state to Redis
+            thread_id = current_state.get("metadata", {}).get("thread_id")
+            if thread_id:
+                try:
+                    # Convert set to list for JSON serialization
+                    if "extracted_entities" in current_state and isinstance(current_state["extracted_entities"], set):
+                        current_state["extracted_entities"] = list(current_state["extracted_entities"])
+                    
+                    await save_thread_state(thread_id, current_state)
+                    logger.info(f"Saved workflow state to Redis for thread {thread_id}")
+                except Exception as e:
+                    logger.error(f"Error saving workflow state to Redis: {str(e)}")
+            
             return current_state
         except Exception as e:
             logger.error(f"Error in workflow execution at node {current_node}: {str(e)}")
+            logger.error(traceback.format_exc())
             # Add a default AI response in case of error
             if "messages" in state:
                 state["messages"].append(AIMessage(content="I apologize, but I encountered an error processing your request. Could you please try again?"))
@@ -181,7 +224,13 @@ async def get_workflow():
     global _workflow
     if _workflow is None:
         logger.info("Creating new workflow instance")
-        _workflow = await create_workflow()
+        try:
+            _workflow = await create_workflow()
+            logger.info("Workflow created successfully")
+        except Exception as e:
+            logger.error(f"Error creating workflow: {str(e)}")
+            logger.error(traceback.format_exc())
+            return None
     return _workflow
 
 def get_default_state() -> Dict[str, Any]:

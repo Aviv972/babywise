@@ -5,11 +5,13 @@ This module implements the chat-related API endpoints.
 """
 
 import logging
-from typing import Dict, Any, Optional
-from fastapi import APIRouter, HTTPException
+import json
+from typing import Dict, Any, Optional, List
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 from backend.models.message_types import HumanMessage, AIMessage
 from backend.workflow.workflow import get_workflow, get_default_state
+from backend.services.redis_service import get_thread_state, save_thread_state, delete_thread_state
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -17,9 +19,6 @@ logger = logging.getLogger(__name__)
 
 # Create router
 router = APIRouter()
-
-# Thread state storage
-thread_states: Dict[str, Dict[str, Any]] = {}
 
 # Request/Response models
 class ChatRequest(BaseModel):
@@ -42,16 +41,31 @@ async def chat(request: ChatRequest):
     try:
         logger.info(f"Received chat request: {request.message[:50]}... (thread: {request.thread_id}, language: {request.language})")
         
-        # Get or create thread state
-        thread_id = request.thread_id or "default"
-        if thread_id not in thread_states:
-            thread_states[thread_id] = get_default_state()
-            thread_states[thread_id]["metadata"]["language"] = request.language
-            thread_states[thread_id]["metadata"]["thread_id"] = thread_id
+        # Get or create thread ID
+        thread_id = request.thread_id or f"default_{request.language}"
+        
+        # Try to get thread state from Redis
+        state = None
+        try:
+            state = await get_thread_state(thread_id)
+            if state:
+                logger.info(f"Retrieved thread state from Redis for {thread_id}")
+                # Convert set to list for JSON serialization if needed
+                if "extracted_entities" in state and isinstance(state["extracted_entities"], set):
+                    state["extracted_entities"] = list(state["extracted_entities"])
+        except Exception as e:
+            logger.error(f"Error retrieving thread state from Redis: {str(e)}")
+            # Continue with a new state
+        
+        # Create new state if not found
+        if not state:
+            state = get_default_state()
+            state["metadata"]["language"] = request.language
+            state["metadata"]["thread_id"] = thread_id
             logger.info(f"Created new thread state for {thread_id}")
         
-        state = thread_states[thread_id]
-        state["language"] = request.language  # Ensure language is set in state
+        # Ensure language is set in state
+        state["language"] = request.language
         
         # Add user message to state
         user_message = HumanMessage(content=request.message)
@@ -71,20 +85,43 @@ async def chat(request: ChatRequest):
             logger.info("Workflow processing completed")
         except Exception as e:
             logger.error(f"Error in workflow processing: {str(e)}")
-            raise HTTPException(status_code=500, detail=f"Workflow error: {str(e)}")
+            # Add error message to state
+            error_message = f"I apologize, but I encountered an error processing your request. Please try again."
+            state["messages"].append(AIMessage(content=error_message))
+            
+            # Try to save the state with the error message
+            try:
+                await save_thread_state(thread_id, state)
+            except Exception as save_error:
+                logger.error(f"Error saving thread state after workflow error: {str(save_error)}")
+            
+            return ChatResponse(response=error_message)
         
         # Get the last message (response)
         if not result or "messages" not in result or not result["messages"]:
             logger.error("No response from workflow")
-            raise HTTPException(status_code=500, detail="No response from workflow")
+            error_message = "I apologize, but I couldn't generate a response. Please try again."
+            return ChatResponse(response=error_message)
             
         last_message = result["messages"][-1]
         if not isinstance(last_message, AIMessage):
             logger.error("Invalid response from workflow")
-            raise HTTPException(status_code=500, detail="Invalid response from workflow")
+            error_message = "I apologize, but I received an invalid response. Please try again."
+            return ChatResponse(response=error_message)
         
-        # Update thread state
-        thread_states[thread_id] = result
+        # Convert set to list for JSON serialization if needed
+        if "extracted_entities" in result and isinstance(result["extracted_entities"], set):
+            result["extracted_entities"] = list(result["extracted_entities"])
+        
+        # Save thread state to Redis
+        try:
+            save_success = await save_thread_state(thread_id, result)
+            if save_success:
+                logger.info(f"Saved thread state to Redis for {thread_id}")
+            else:
+                logger.warning(f"Failed to save thread state to Redis for {thread_id}")
+        except Exception as e:
+            logger.error(f"Error saving thread state to Redis: {str(e)}")
         
         # Check if command was processed
         command_processed = result.get("skip_chat", False)
@@ -109,7 +146,9 @@ async def chat(request: ChatRequest):
     
     except Exception as e:
         logger.error(f"Error processing chat message: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        return ChatResponse(
+            response=f"I apologize, but I encountered an error. Please try again."
+        )
 
 @router.get("/context/{thread_id}")
 async def get_context(thread_id: str):
@@ -118,11 +157,20 @@ async def get_context(thread_id: str):
     """
     try:
         logger.info(f"Getting context for thread {thread_id}")
-        if thread_id not in thread_states:
+        
+        # Try to get thread state from Redis
+        state = None
+        try:
+            state = await get_thread_state(thread_id)
+        except Exception as e:
+            logger.error(f"Error retrieving thread state from Redis: {str(e)}")
+            # Return empty context
+            return {"context": None}
+        
+        if not state:
             logger.info(f"No context found for thread {thread_id}")
             return {"context": None}
         
-        state = thread_states[thread_id]
         context = {
             "domain": state.get("domain", ""),
             "metadata": state.get("metadata", {}),
@@ -132,7 +180,7 @@ async def get_context(thread_id: str):
         return {"context": context}
     except Exception as e:
         logger.error(f"Error getting context: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        return {"context": None, "error": str(e)}
 
 @router.post("/reset/{thread_id}")
 async def reset_thread(thread_id: str):
@@ -141,10 +189,18 @@ async def reset_thread(thread_id: str):
     """
     try:
         logger.info(f"Resetting thread {thread_id}")
-        if thread_id in thread_states:
-            del thread_states[thread_id]
-            logger.info(f"Thread {thread_id} reset successfully")
+        
+        # Delete thread state from Redis
+        try:
+            delete_success = await delete_thread_state(thread_id)
+            if delete_success:
+                logger.info(f"Thread {thread_id} reset successfully")
+            else:
+                logger.warning(f"Failed to reset thread {thread_id}")
+        except Exception as e:
+            logger.error(f"Error deleting thread state from Redis: {str(e)}")
+            
         return {"success": True}
     except Exception as e:
         logger.error(f"Error resetting thread: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e)) 
+        return {"success": False, "error": str(e)} 
