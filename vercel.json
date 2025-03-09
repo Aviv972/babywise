@@ -17,13 +17,20 @@
                 "maxDuration": 60,
                 "installCommand": "pip install --no-deps -r api/requirements.txt && pip install pydantic==2.1.1 vercel-kv==0.1.5"
             }
+        },
+        {
+            "src": "frontend/**",
+            "use": "@vercel/static"
+        },
+        {
+            "src": "static/**",
+            "use": "@vercel/static"
         }
     ],
     "routes": [
-        { "handle": "filesystem" },
         { "src": "/static/(.*)", "dest": "/static/$1" },
-        { "src": "/frontend/(.*)", "dest": "/frontend/$1" },
-        { "src": "/api/?(.*)", "dest": "api/index.py" },
+        { "src": "/api/(.*)", "dest": "/api/index.py" },
+        { "src": "/(.*\\.(js|css|svg|png|jpg|jpeg|gif|ico))", "dest": "/frontend/$1" },
         { "src": "/(.*)", "dest": "/frontend/index.html" }
     ],
     "env": {
