@@ -35,7 +35,8 @@ def diagnose_forward_ref_classes() -> Dict[str, Any]:
             "modules_with_forward_ref": [],
             "forward_ref_classes": [],
             "evaluate_signatures": [],
-            "is_multiple_classes": False
+            "is_multiple_classes": False,
+            "python_version": sys.version
         }
         
         # Check typing module
@@ -128,6 +129,54 @@ def apply_direct_pydantic_patch() -> bool:
         
     except Exception as e:
         logger.error(f"Failed to apply direct pydantic patch: {str(e)}")
+        return False
+
+def patch_python312_forwardref() -> bool:
+    """
+    Apply a specific patch for Python 3.12's ForwardRef implementation.
+    
+    In Python 3.12, the ForwardRef._evaluate method signature changed,
+    causing compatibility issues with older libraries like pydantic v1.
+    
+    Returns:
+        bool: True if patch was applied successfully, False otherwise
+    """
+    try:
+        # Only apply this patch for Python 3.12+
+        if sys.version_info < (3, 12):
+            logger.info("Python version is below 3.12, skipping Python 3.12 ForwardRef patch")
+            return False
+            
+        logger.info("Applying Python 3.12 ForwardRef patch")
+        
+        # Get the original ForwardRef._evaluate method
+        original_evaluate = ForwardRef._evaluate
+        
+        # Define a wrapper function that adapts the method signature
+        def patched_evaluate(self, globalns, localns, recursive_guard=None):
+            """
+            Patched version of ForwardRef._evaluate for Python 3.12+.
+            
+            This wrapper handles the recursive_guard parameter correctly,
+            making it compatible with both pydantic v1 and Python 3.12.
+            """
+            logger.debug(f"Patched ForwardRef._evaluate called for {self}")
+            
+            # In Python 3.12, recursive_guard is handled internally
+            # So we can safely ignore it if provided
+            try:
+                return original_evaluate(self, globalns, localns)
+            except Exception as e:
+                logger.error(f"Error in patched ForwardRef._evaluate: {str(e)}")
+                raise
+        
+        # Replace the method
+        ForwardRef._evaluate = patched_evaluate
+        logger.info("Successfully applied Python 3.12 ForwardRef patch")
+        return True
+        
+    except Exception as e:
+        logger.error(f"Failed to apply Python 3.12 ForwardRef patch: {str(e)}")
         return False
 
 def patch_distutils() -> bool:
@@ -226,11 +275,58 @@ def patch_distutils() -> bool:
         class DistutilsModuleError(DistutilsError): pass
         class DistutilsExecError(DistutilsError): pass
         class DistutilsPlatformError(DistutilsError): pass
+        class DistutilsSetupError(DistutilsError): pass
+        class DistutilsArgError(DistutilsError): pass
+        class DistutilsFileError(DistutilsError): pass
+        class DistutilsOptionError(DistutilsError): pass
+        class DistutilsInternalError(DistutilsError): pass
         
         mock_errors.DistutilsError = DistutilsError
         mock_errors.DistutilsModuleError = DistutilsModuleError
         mock_errors.DistutilsExecError = DistutilsExecError
         mock_errors.DistutilsPlatformError = DistutilsPlatformError
+        mock_errors.DistutilsSetupError = DistutilsSetupError
+        mock_errors.DistutilsArgError = DistutilsArgError
+        mock_errors.DistutilsFileError = DistutilsFileError
+        mock_errors.DistutilsOptionError = DistutilsOptionError
+        mock_errors.DistutilsInternalError = DistutilsInternalError
+        
+        # Create distutils.util submodule
+        mock_util = types.ModuleType('distutils.util')
+        sys.modules['distutils.util'] = mock_util
+        
+        # Add common utility functions
+        def strtobool(val):
+            """Convert a string representation of truth to true (1) or false (0).
+            
+            True values are 'y', 'yes', 't', 'true', 'on', and '1'; false values
+            are 'n', 'no', 'f', 'false', 'off', and '0'.  Raises ValueError if
+            'val' is anything else.
+            """
+            val = val.lower()
+            if val in ('y', 'yes', 't', 'true', 'on', '1'):
+                return 1
+            elif val in ('n', 'no', 'f', 'false', 'off', '0'):
+                return 0
+            else:
+                raise ValueError(f"invalid truth value {val!r}")
+        
+        mock_util.strtobool = strtobool
+        
+        # Create distutils.sysconfig submodule
+        mock_sysconfig = types.ModuleType('distutils.sysconfig')
+        sys.modules['distutils.sysconfig'] = mock_sysconfig
+        
+        # Add common sysconfig functions
+        def get_python_lib(plat_specific=0, standard_lib=0, prefix=None):
+            """Return the directory for site-packages."""
+            import site
+            if standard_lib:
+                return site.getsitepackages()[0]
+            else:
+                return site.getusersitepackages()
+        
+        mock_sysconfig.get_python_lib = get_python_lib
         
         logger.info("Successfully created mock distutils module")
         return True
@@ -251,6 +347,9 @@ def apply_all_patches() -> Dict[str, bool]:
     # First run diagnostics
     diagnostics = diagnose_forward_ref_classes()
     logger.info(f"ForwardRef diagnostics: {diagnostics}")
+    
+    # Apply Python 3.12 ForwardRef patch
+    results["python312_forwardref_patch"] = patch_python312_forwardref()
     
     # Apply direct pydantic patch
     results["direct_pydantic_patch"] = apply_direct_pydantic_patch()
