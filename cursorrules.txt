@@ -143,3 +143,9 @@
 - Data persistence with SQLite database
 - Input validation for commands and user inputs
 - Error handling with appropriate user feedback 
+
+## Critical Requirement: 
+The only priority is to maintain full project functionality as designed.
+❌ No simplified versions
+❌ No hotfixes or quick patches that compromise intended functionality
+Please ensure the solution preserves the app's original behavior while resolving the deployment problem. Let me know if you need any clarification!

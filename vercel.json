@@ -6,7 +6,11 @@
             "use": "@vercel/python",
             "config": {
                 "runtime": "python3.12",
-                "maxLambdaSize": "50mb"
+                "maxLambdaSize": "50mb",
+                "includeFiles": [
+                    "backend/**",
+                    "api/**"
+                ]
             }
         }
     ],
@@ -19,12 +23,13 @@
     "env": {
         "PYTHONPATH": ".",
         "PYTHONUNBUFFERED": "1",
-        "STORAGE_URL": "redis://default:SKNzsYzhLZ3eInH78gk7EWYEtIlRf4fd@redis-10101.c135.eu-central-1-1.ec2.redns.redis-cloud.com:10101"
+        "STORAGE_URL": "redis://default:SKNzsYzhLZ3eInH78gk7EWYEtIlRf4fd@redis-10101.c135.eu-central-1-1.ec2.redns.redis-cloud.com:10101",
+        "OPENAI_API_KEY": "${OPENAI_API_KEY}"
     },
     "functions": {
         "api/index.py": {
             "memory": 1024,
-            "maxDuration": 10
+            "maxDuration": 60
         }
     }
 } 
