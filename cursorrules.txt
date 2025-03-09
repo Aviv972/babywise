@@ -58,7 +58,7 @@
 
 ## Technology Stack
 ### Backend
-- Python 3.9+
+- Python 3.12+
 - LangChain 0.3+
 - LangGraph 0.2+
 - OpenAI API
