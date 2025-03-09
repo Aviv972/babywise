@@ -222,15 +222,42 @@ try:
     # Import backend modules
     logger.info("Attempting to import backend modules")
     
+    # Set up environment variables that might be needed by the backend
+    os.environ.setdefault("OPENAI_API_KEY", os.environ.get("OPENAI_API_KEY", ""))
+    os.environ.setdefault("STORAGE_URL", os.environ.get("STORAGE_URL", ""))
+    
+    # Create a mock .env file if it doesn't exist
+    env_path = Path(__file__).parent.parent / '.env'
+    if not env_path.exists():
+        logger.info(f"Creating mock .env file at {env_path}")
+        with open(env_path, 'w') as f:
+            f.write(f"OPENAI_API_KEY={os.environ.get('OPENAI_API_KEY', '')}\n")
+            f.write(f"STORAGE_URL={os.environ.get('STORAGE_URL', '')}\n")
+    
     # Now try to import the backend
-    from backend.api.main import app as backend_app
-    
-    # Use the backend app's routes
-    app.routes.extend(backend_app.routes)
-    logger.info("Successfully imported backend routes")
-    
-    # Import successful, use the backend app
-    BACKEND_AVAILABLE = True
+    try:
+        from backend.api.main import app as backend_app
+        
+        # Use the backend app's routes
+        app.routes.extend(backend_app.routes)
+        logger.info("Successfully imported backend routes")
+        
+        # Import successful, use the backend app
+        BACKEND_AVAILABLE = True
+    except ImportError as e:
+        logger.error(f"ImportError when importing backend app: {str(e)}")
+        # Try to import specific modules to diagnose the issue
+        try:
+            import backend
+            logger.info("Successfully imported backend package")
+            
+            import backend.api
+            logger.info("Successfully imported backend.api package")
+            
+            # If we got here, the issue is with backend.api.main specifically
+            logger.error("Issue is with backend.api.main module")
+        except ImportError as e2:
+            logger.error(f"Failed to import backend packages: {str(e2)}")
 except Exception as e:
     # Log the error
     logger.error(f"Failed to import backend app: {str(e)}")
@@ -397,3 +424,82 @@ async def thread_summary_route(thread_id: str, request: Request):
             status_code=500,
             content={"error": "Internal server error", "detail": str(e)}
         )
+
+# Debug endpoint for backend import status
+@app.get("/debug/backend")
+async def debug_backend():
+    """Debug endpoint to check backend import status."""
+    try:
+        # Check if backend directory exists
+        backend_dir = Path(__file__).parent.parent / "backend"
+        backend_exists = backend_dir.exists()
+        
+        # Check if backend/__init__.py exists
+        backend_init = backend_dir / "__init__.py"
+        backend_init_exists = backend_init.exists()
+        
+        # Check if backend/api directory exists
+        backend_api_dir = backend_dir / "api"
+        backend_api_exists = backend_api_dir.exists()
+        
+        # Check if backend/api/__init__.py exists
+        backend_api_init = backend_api_dir / "__init__.py"
+        backend_api_init_exists = backend_api_init.exists()
+        
+        # Check if backend/api/main.py exists
+        backend_api_main = backend_api_dir / "main.py"
+        backend_api_main_exists = backend_api_main.exists()
+        
+        # Try to import backend modules
+        backend_import_error = None
+        try:
+            import backend
+            backend_imported = True
+        except ImportError as e:
+            backend_imported = False
+            backend_import_error = str(e)
+        
+        # Try to import backend.api
+        backend_api_import_error = None
+        try:
+            import backend.api
+            backend_api_imported = True
+        except ImportError as e:
+            backend_api_imported = False
+            backend_api_import_error = str(e)
+        
+        # Try to import backend.api.main
+        backend_api_main_import_error = None
+        try:
+            import backend.api.main
+            backend_api_main_imported = True
+        except ImportError as e:
+            backend_api_main_imported = False
+            backend_api_main_import_error = str(e)
+        except Exception as e:
+            backend_api_main_imported = False
+            backend_api_main_import_error = f"Error: {str(e)}"
+        
+        return {
+            "backend_available": BACKEND_AVAILABLE,
+            "diagnostics": {
+                "backend_dir_exists": backend_exists,
+                "backend_init_exists": backend_init_exists,
+                "backend_api_dir_exists": backend_api_exists,
+                "backend_api_init_exists": backend_api_init_exists,
+                "backend_api_main_exists": backend_api_main_exists,
+                "backend_imported": backend_imported,
+                "backend_import_error": backend_import_error,
+                "backend_api_imported": backend_api_imported,
+                "backend_api_import_error": backend_api_import_error,
+                "backend_api_main_imported": backend_api_main_imported,
+                "backend_api_main_import_error": backend_api_main_import_error,
+                "python_path": sys.path
+            }
+        }
+    except Exception as e:
+        logger.error(f"Error in debug_backend: {str(e)}")
+        return {
+            "status": "error",
+            "error": str(e)
+        }
