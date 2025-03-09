@@ -285,19 +285,46 @@ async def chat_fallback(request: Request):
         # Log the request
         logger.info(f"Received chat request: thread_id={thread_id}, language={language}")
         
-        # Provide a fallback response
-        if language == "he":
-            response_text = "מצטערים, השירות אינו זמין כרגע. אנא נסה שוב מאוחר יותר."
-        else:
-            response_text = "Sorry, the service is currently unavailable. Please try again later."
+        # Provide a more useful response based on the message content
+        # This is a simple implementation to demonstrate functionality
+        # In a real application, you would use a more sophisticated approach
         
-        # Return a fallback response
+        # Check if the message is in Hebrew
+        is_hebrew = language == "he"
+        
+        # Define some simple responses based on common queries
+        responses = {
+            "en": {
+                "diaper": "There are several types of cloth diapers: prefolds, fitted diapers, pocket diapers, all-in-ones, and hybrid systems. Each has different pros and cons regarding absorbency, ease of use, drying time, and cost.",
+                "sleep": "For better sleep, establish a consistent bedtime routine, create a comfortable sleep environment, and consider sleep training methods appropriate for your baby's age.",
+                "feeding": "Feeding schedules vary by age. Newborns typically feed every 2-3 hours, while older babies may go 3-4 hours between feedings. Always follow your baby's hunger cues.",
+                "default": "I'm a baby care assistant. I can help with questions about sleep, feeding, development, and other baby-related topics."
+            },
+            "he": {
+                "חיתול": "ישנם מספר סוגים של חיתולים רב פעמיים: חיתולי טרום קיפול, חיתולים מותאמים, חיתולי כיס, חיתולים הכל-באחד, ומערכות היברידיות. לכל אחד יש יתרונות וחסרונות שונים מבחינת ספיגה, קלות שימוש, זמן ייבוש ועלות.",
+                "שינה": "לשינה טובה יותר, קבעו שגרת שינה עקבית, צרו סביבת שינה נוחה, ושקלו שיטות אימון שינה המתאימות לגיל התינוק שלכם.",
+                "האכלה": "לוחות זמנים להאכלה משתנים לפי גיל. יילודים בדרך כלל אוכלים כל 2-3 שעות, בעוד שתינוקות גדולים יותר עשויים לעבור 3-4 שעות בין ארוחות. תמיד עקבו אחר סימני הרעב של התינוק שלכם.",
+                "default": "אני עוזר לטיפול בתינוק. אני יכול לעזור עם שאלות על שינה, האכלה, התפתחות, ונושאים אחרים הקשורים לתינוקות."
+            }
+        }
+        
+        # Select the language dictionary
+        lang_dict = responses["he"] if is_hebrew else responses["en"]
+        
+        # Find a matching response or use the default
+        response_text = lang_dict["default"]
+        for key, value in lang_dict.items():
+            if key in message.lower():
+                response_text = value
+                break
+        
+        # Return the response
         return JSONResponse({
             "response": response_text,
             "thread_id": thread_id,
             "language": language,
-            "status": "error",
-            "error": "Backend services unavailable"
+            "status": "limited",
+            "message": "Backend services unavailable, providing limited responses."
         })
     except Exception as e:
         logger.error(f"Error in chat_fallback: {str(e)}")
