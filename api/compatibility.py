@@ -551,6 +551,17 @@ def patch_aioredis_timeout() -> bool:
         import asyncio
         import builtins
         
+        # Check if aioredis.exceptions is already patched
+        if 'aioredis.exceptions' in sys.modules:
+            try:
+                # Try to import AuthenticationError to verify the patch
+                from aioredis.exceptions import AuthenticationError
+                logger.info("aioredis.exceptions is already patched with AuthenticationError")
+                return True
+            except ImportError:
+                logger.warning("aioredis.exceptions is in sys.modules but missing AuthenticationError")
+                # Continue with patching
+        
         # Only apply this patch for Python 3.12+
         if sys.version_info < (3, 12):
             logger.info("Python version is below 3.12, skipping aioredis TimeoutError patch")

@@ -11,6 +11,11 @@ import logging
 import traceback
 
 # Set up logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S',
+)
 logger = logging.getLogger(__name__)
 
 def apply_patch():
@@ -38,6 +43,7 @@ def apply_patch():
         # Create base exception classes
         class RedisError(Exception): pass
         aioredis_exceptions.RedisError = RedisError
+        logger.info("Created RedisError base class")
         
         # Create the patched TimeoutError
         if asyncio.TimeoutError is builtins.TimeoutError:
@@ -48,6 +54,7 @@ def apply_patch():
             class TimeoutError(asyncio.TimeoutError, builtins.TimeoutError, RedisError): pass
         
         aioredis_exceptions.TimeoutError = TimeoutError
+        logger.info("Created TimeoutError class")
         
         # Add other necessary exception classes
         class ConnectionError(RedisError): pass
@@ -70,6 +77,7 @@ def apply_patch():
         class ClusterDownError(ClusterError): pass
         class ClusterCrossSlotError(ClusterError): pass
         
+        # Register all exception classes
         aioredis_exceptions.ConnectionError = ConnectionError
         aioredis_exceptions.ProtocolError = ProtocolError
         aioredis_exceptions.WatchError = WatchError
@@ -90,8 +98,30 @@ def apply_patch():
         aioredis_exceptions.ClusterDownError = ClusterDownError
         aioredis_exceptions.ClusterCrossSlotError = ClusterCrossSlotError
         
+        logger.info("Created and registered all exception classes")
+        
+        # Verify AuthenticationError is properly registered
+        if hasattr(aioredis_exceptions, 'AuthenticationError'):
+            logger.info(f"AuthenticationError is registered: {aioredis_exceptions.AuthenticationError}")
+        else:
+            logger.error("AuthenticationError is NOT registered!")
+        
         # Register the module
         sys.modules['aioredis.exceptions'] = aioredis_exceptions
+        
+        # Verify the module is registered
+        if 'aioredis.exceptions' in sys.modules:
+            logger.info("aioredis.exceptions module is registered in sys.modules")
+        else:
+            logger.error("aioredis.exceptions module is NOT registered in sys.modules!")
+        
+        # Verify we can import from the patched module
+        try:
+            from aioredis.exceptions import AuthenticationError as TestAuthError
+            logger.info(f"Successfully imported AuthenticationError from patched module: {TestAuthError}")
+        except ImportError as e:
+            logger.error(f"Failed to import AuthenticationError from patched module: {e}")
+        
         logger.info("Successfully pre-patched aioredis.exceptions module")
         return True
     except Exception as e:
@@ -100,4 +130,8 @@ def apply_patch():
         return False
 
 # Apply the patch when the module is imported
-patch_result = apply_patch() 
+patch_result = apply_patch()
+logger.info(f"aioredis patch result: {patch_result}")
+
+# Export the patch result for other modules to check
+__all__ = ['patch_result'] 

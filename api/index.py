@@ -18,8 +18,29 @@ logger = logging.getLogger(__name__)
 
 # Import aioredis patch before any other imports
 try:
+    logger.info("Importing aioredis_patch module...")
     from api.aioredis_patch import patch_result as aioredis_patch_result
     logger.info(f"aioredis patch result: {aioredis_patch_result}")
+    
+    # Verify we can import AuthenticationError
+    try:
+        from aioredis.exceptions import AuthenticationError
+        logger.info(f"Successfully imported AuthenticationError: {AuthenticationError}")
+    except ImportError as e:
+        logger.error(f"Failed to import AuthenticationError after patching: {e}")
+        logger.error(traceback.format_exc())
+        
+        # Try to diagnose the issue
+        try:
+            import aioredis
+            logger.info(f"aioredis module: {aioredis}")
+            logger.info(f"aioredis module location: {aioredis.__file__}")
+            
+            import aioredis.exceptions
+            logger.info(f"aioredis.exceptions module: {aioredis.exceptions}")
+            logger.info(f"Available attributes in aioredis.exceptions: {dir(aioredis.exceptions)}")
+        except Exception as e2:
+            logger.error(f"Error diagnosing aioredis: {e2}")
 except Exception as e:
     logger.error(f"Failed to import aioredis patch: {str(e)}")
     logger.error(traceback.format_exc())
@@ -95,10 +116,23 @@ except Exception as e:
 # Import chat router separately to ensure it's always defined
 chat_router = None
 try:
-    from backend.api.chat import router as chat_router
-    logger.info("Successfully imported chat router")
+    # First try to import directly from backend.api.chat
+    try:
+        import backend.api.chat
+        logger.info(f"Successfully imported backend.api.chat module: {backend.api.chat}")
+        from backend.api.chat import router as chat_router
+        logger.info(f"Successfully imported chat router: {chat_router}")
+    except Exception as e:
+        logger.error(f"Failed to import backend.api.chat module: {str(e)}")
+        logger.error(traceback.format_exc())
+        
+        # Try alternative import path
+        from backend.api.chat import router as chat_router
+        logger.info("Successfully imported chat router via alternative path")
 except Exception as e:
     logger.error(f"Failed to import chat router: {str(e)}")
+    logger.error(traceback.format_exc())
+    
     # Create a minimal fallback router
     from fastapi import APIRouter
     chat_router = APIRouter(prefix="/chat")
