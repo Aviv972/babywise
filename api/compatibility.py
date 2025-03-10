@@ -171,11 +171,17 @@ def patch_pydantic_typing_extra() -> bool:
             original_eval_type_backport = pydantic._internal._typing_extra.eval_type_backport
             
             # Define a patched version that handles non-ForwardRef values
-            def patched_eval_type_backport(value, globalns, localns, type_params=None):
+            def patched_eval_type_backport(value, globalns, localns=None, type_params=None):
                 """
                 Patched version of eval_type_backport that handles non-ForwardRef values.
+                Maintains compatibility with both direct calls and schema generation calls.
                 """
                 logger.info(f"[PATCH] pydantic._internal._typing_extra.eval_type_backport called for {value}")
+                
+                # If localns is None, use globalns as localns (this is standard Python behavior)
+                if localns is None:
+                    logger.info("[PATCH] localns is None, using globalns")
+                    localns = globalns
                 
                 # Check if value is a ForwardRef
                 if not isinstance(value, ForwardRef):
