@@ -9,6 +9,7 @@ Usage:
 """
 
 import sys
+import os
 import logging
 import inspect
 import types
@@ -16,6 +17,23 @@ from typing import Any, Dict, Optional, Callable, ForwardRef, cast
 
 # Configure logging
 logger = logging.getLogger(__name__)
+
+def setup_environment():
+    """Set environment variables directly for read-only environments and patch dotenv."""
+    os.environ.setdefault("OPENAI_API_KEY", os.environ.get("OPENAI_API_KEY", ""))
+    os.environ.setdefault("STORAGE_URL", os.environ.get("STORAGE_URL", ""))
+
+    try:
+        import dotenv
+
+        def patched_load_dotenv(*args, **kwargs):
+            logger.info("Patched load_dotenv called (no-op).")
+            return True
+
+        dotenv.load_dotenv = patched_load_dotenv
+        logger.info("dotenv.load_dotenv successfully patched.")
+    except ImportError:
+        logger.info("dotenv not installed; no patch needed.")
 
 def diagnose_forward_ref_classes() -> Dict[str, Any]:
     """
@@ -347,6 +365,14 @@ def apply_all_patches() -> Dict[str, bool]:
     # First run diagnostics
     diagnostics = diagnose_forward_ref_classes()
     logger.info(f"ForwardRef diagnostics: {diagnostics}")
+    
+    # Set up environment variables and patch dotenv for read-only environments
+    try:
+        setup_environment()
+        results["environment_setup"] = True
+    except Exception as e:
+        logger.error(f"Failed to set up environment: {str(e)}")
+        results["environment_setup"] = False
     
     # Apply Python 3.12 ForwardRef patch
     results["python312_forwardref_patch"] = patch_python312_forwardref()
