@@ -78,15 +78,16 @@ async def generate_response(state: Dict[str, Any]) -> Dict[str, Any]:
         
         # Check if OpenAI API key is available
         openai_api_key = os.environ.get("OPENAI_API_KEY")
+        logger.info(f"OpenAI API key available: {bool(openai_api_key)}")
         if not openai_api_key:
             logger.warning("OpenAI API key not found, using mock response")
             return create_mock_response(state, domain, language)
         
         try:
             # Initialize the LLM
-            logger.info("Initializing ChatOpenAI")
+            logger.info("Initializing ChatOpenAI with model: gpt-4o-mini")
             llm = ChatOpenAI(
-                model="gpt-3.5-turbo",
+                model="gpt-4o-mini",
                 temperature=0.4,
                 openai_api_key=openai_api_key
             )
@@ -98,49 +99,84 @@ async def generate_response(state: Dict[str, Any]) -> Dict[str, Any]:
             lang_instructions = LANGUAGE_INSTRUCTIONS.get(language, LANGUAGE_INSTRUCTIONS["en"])
             
             # Create the prompt template
+            logger.info("Creating prompt template")
+            system_prompt = f"""
+You are the Babywise Assistant, a specialized AI assistant for new and expecting parents.
+
+{domain_prompt}
+
+{lang_instructions}
+
+Current context:
+{json.dumps(context, indent=2)}
+            """
+            
             prompt = ChatPromptTemplate.from_messages([
-                ("system", f"{domain_prompt}\n\n{lang_instructions}"),
-                MessagesPlaceholder(variable_name="history"),
-                ("human", "{input}")
+                ("system", system_prompt),
+                MessagesPlaceholder(variable_name="chat_history"),
             ])
             
-            # Format the conversation history
-            history = []
-            for msg in state["messages"][:-1]:  # Exclude the last message
-                if isinstance(msg, HumanMessage):
-                    history.append(("human", msg.content))
-                elif isinstance(msg, AIMessage):
-                    history.append(("assistant", msg.content))
+            # Extract chat history
+            chat_history = []
+            for message in state["messages"]:
+                if isinstance(message, HumanMessage):
+                    chat_history.append(("human", message.content))
+                elif isinstance(message, AIMessage):
+                    chat_history.append(("ai", message.content))
             
-            # Create the chain
-            chain = prompt | llm
+            logger.info(f"Preparing to invoke LLM with {len(chat_history)} messages in history")
             
-            # Generate the response
-            logger.info("Generating response with LLM")
-            response = await chain.ainvoke({
-                "history": history,
-                "input": last_user_message
-            })
+            # Invoke the LLM
+            try:
+                logger.info("Invoking LLM")
+                # Test with a basic Hello World first to validate API call
+                test_result = await llm.ainvoke([{"role": "user", "content": "Say Hello World"}])
+                logger.info(f"Test LLM call successful: {test_result.content[:50]}...")
+                
+                # Create the actual payload
+                chain = prompt | llm
+                formatted_chat_history = [{"role": role, "content": content} for role, content in chat_history]
+                logger.info(f"Sending actual request to LLM with {len(formatted_chat_history)} messages")
+                
+                # Log a sample of the input to help with debugging
+                sample_input = {"chat_history": formatted_chat_history[:2]} if formatted_chat_history else {"chat_history": []}
+                logger.info(f"Sample of chain input: {json.dumps(sample_input, indent=2)[:200]}...")
+                
+                result = await chain.ainvoke({"chat_history": formatted_chat_history})
+                response = result.content
+                logger.info(f"LLM response received (first 100 chars): {response[:100]}")
+            except Exception as llm_error:
+                logger.error(f"Error during LLM invocation: {str(llm_error)}", exc_info=True)
+                # Try a fallback model
+                try:
+                    logger.info("Trying fallback model: gpt-3.5-turbo")
+                    fallback_llm = ChatOpenAI(
+                        model="gpt-3.5-turbo", 
+                        temperature=0.4,
+                        openai_api_key=openai_api_key
+                    )
+                    chain = prompt | fallback_llm
+                    result = await chain.ainvoke({"chat_history": formatted_chat_history})
+                    response = result.content
+                    logger.info(f"Fallback LLM response received (first 100 chars): {response[:100]}")
+                except Exception as fallback_error:
+                    logger.error(f"Error during fallback LLM invocation: {str(fallback_error)}", exc_info=True)
+                    logger.error("Both primary and fallback models failed, using mock response")
+                    return create_mock_response(state, domain, language)
             
-            # Extract the content from the response
-            response_content = response.content
-            
-            # Add the response to the state
-            state["messages"].append(AIMessage(content=response_content))
-            logger.info(f"Generated response: '{response_content}'")
-            
+            # Add the response to the messages
+            state["messages"].append(AIMessage(content=response))
             return state
-            
-        except Exception as e:
-            logger.error(f"Error using LLM: {str(e)}")
-            logger.info("Falling back to mock response")
-            return create_mock_response(state, domain, language)
         
-    except Exception as e:
-        logger.error(f"Error in generate_response: {str(e)}")
-        # Add a default response in case of error
-        default_response = "I'm here to help with your baby care questions. Could you please ask me again?"
-        state["messages"].append(AIMessage(content=default_response))
+        except Exception as e:
+            logger.error(f"Error in response generation: {str(e)}", exc_info=True)
+            return create_mock_response(state, domain, language)
+            
+    except Exception as outer_e:
+        logger.error(f"Outer exception in generate_response: {str(outer_e)}", exc_info=True)
+        # Ensure we always return a valid state
+        if "messages" in state:
+            state["messages"].append(AIMessage(content="I apologize, but I encountered an error while processing your request. Please try again."))
         return state
 
 def create_mock_response(state: Dict[str, Any], domain: str, language: str) -> Dict[str, Any]:
