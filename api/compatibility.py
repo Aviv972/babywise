@@ -558,29 +558,69 @@ def patch_aioredis_timeout() -> bool:
             
         logger.info("Applying aioredis TimeoutError patch")
         
-        try:
-            import aioredis.exceptions
-            from aioredis.exceptions import RedisError
-            
-            # Create a new TimeoutError class with only unique base classes
-            if asyncio.TimeoutError is builtins.TimeoutError:
-                # If they're the same, only use one of them
-                class PatchedTimeoutError(asyncio.TimeoutError, RedisError):
-                    pass
-            else:
-                # If they're different (shouldn't happen in 3.12+, but just in case)
-                class PatchedTimeoutError(asyncio.TimeoutError, builtins.TimeoutError, RedisError):
-                    pass
-            
-            # Replace the original TimeoutError
-            aioredis.exceptions.TimeoutError = PatchedTimeoutError
-            logger.info("Successfully patched aioredis TimeoutError")
-            
-            return True
-            
-        except (ImportError, AttributeError) as e:
-            logger.warning(f"Could not patch aioredis TimeoutError: {str(e)}")
-            return False
+        # Create the patched TimeoutError before importing aioredis
+        if asyncio.TimeoutError is builtins.TimeoutError:
+            # If they're the same, only use one of them
+            def create_timeout_error(redis_error_class):
+                return type('TimeoutError', (asyncio.TimeoutError, redis_error_class), {})
+        else:
+            # If they're different (shouldn't happen in 3.12+, but just in case)
+            def create_timeout_error(redis_error_class):
+                return type('TimeoutError', (asyncio.TimeoutError, builtins.TimeoutError, redis_error_class), {})
+        
+        # Store the factory in sys.modules so it can be accessed later
+        sys.modules['aioredis_timeout_factory'] = type('TimeoutFactory', (), {
+            'create_timeout_error': staticmethod(create_timeout_error)
+        })
+        
+        # Patch the module loader to intercept aioredis.exceptions
+        import importlib.abc
+        import types
+        
+        class AioredisLoader(importlib.abc.Loader):
+            def create_module(self, spec):
+                if spec.name == 'aioredis.exceptions':
+                    logger.info("Creating patched aioredis.exceptions module")
+                    module = types.ModuleType(spec.name)
+                    return module
+                return None
+                
+            def exec_module(self, module):
+                if module.__name__ == 'aioredis.exceptions':
+                    logger.info("Executing patched aioredis.exceptions module")
+                    # First, create a base RedisError
+                    class RedisError(Exception): pass
+                    module.RedisError = RedisError
+                    
+                    # Create the patched TimeoutError
+                    module.TimeoutError = sys.modules['aioredis_timeout_factory'].create_timeout_error(RedisError)
+                    
+                    # Add other necessary exception classes
+                    class ConnectionError(RedisError): pass
+                    class ProtocolError(RedisError): pass
+                    class WatchError(RedisError): pass
+                    class ConnectionClosedError(ConnectionError): pass
+                    class PoolClosedError(ConnectionError): pass
+                    
+                    module.ConnectionError = ConnectionError
+                    module.ProtocolError = ProtocolError
+                    module.WatchError = WatchError
+                    module.ConnectionClosedError = ConnectionClosedError
+                    module.PoolClosedError = PoolClosedError
+                    
+                    logger.info("Successfully patched aioredis.exceptions module")
+        
+        # Create and register the module spec
+        import importlib.util
+        import importlib.machinery
+        
+        loader = AioredisLoader()
+        spec = importlib.machinery.ModuleSpec('aioredis.exceptions', loader)
+        sys.modules['aioredis.exceptions'] = loader.create_module(spec)
+        loader.exec_module(sys.modules['aioredis.exceptions'])
+        
+        logger.info("Successfully registered patched aioredis.exceptions module")
+        return True
             
     except Exception as e:
         logger.error(f"Failed to apply aioredis TimeoutError patch: {str(e)}")
@@ -600,6 +640,9 @@ def apply_all_patches() -> Dict[str, bool]:
     diagnostics = diagnose_forward_ref_classes()
     logger.info(f"ForwardRef diagnostics: {diagnostics}")
     
+    # Apply aioredis TimeoutError patch first (before any imports)
+    results["aioredis_timeout_patch"] = patch_aioredis_timeout()
+    
     # Set up environment variables and patch dotenv for read-only environments
     try:
         setup_environment()
@@ -613,9 +656,6 @@ def apply_all_patches() -> Dict[str, bool]:
     
     # Apply direct pydantic patch
     results["direct_pydantic_patch"] = apply_direct_pydantic_patch()
-    
-    # Apply aioredis TimeoutError patch
-    results["aioredis_timeout_patch"] = patch_aioredis_timeout()
     
     # Apply distutils patch
     results["distutils_patch"] = patch_distutils()
