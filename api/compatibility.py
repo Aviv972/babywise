@@ -14,6 +14,7 @@ import logging
 import inspect
 import types
 from typing import Any, Dict, Optional, Callable, ForwardRef, cast
+import traceback
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -167,35 +168,111 @@ def patch_python312_forwardref() -> bool:
             
         logger.info("Applying Python 3.12 ForwardRef patch")
         
+        # First, let's patch pydantic's evaluate_forwardref function directly
+        try:
+            import pydantic.typing
+            
+            # Store the original function
+            original_evaluate_forwardref = pydantic.typing.evaluate_forwardref
+            
+            # Define a new implementation that's compatible with Python 3.12
+            def patched_evaluate_forwardref(ref, globalns, localns):
+                """
+                Patched version of pydantic.typing.evaluate_forwardref that's compatible with Python 3.12.
+                """
+                logger.info(f"[PATCH] pydantic.typing.evaluate_forwardref called for {ref}")
+                
+                # Get the _name attribute from the ForwardRef
+                name = getattr(ref, '_name', None)
+                if name is None:
+                    # Fall back to the original implementation
+                    logger.info(f"[PATCH] No _name attribute found, falling back to original implementation")
+                    return original_evaluate_forwardref(ref, globalns, localns)
+                
+                # Try to evaluate the name directly from the namespace
+                if name in globalns:
+                    logger.info(f"[PATCH] Found '{name}' in globalns, returning directly")
+                    return globalns[name]
+                if name in localns:
+                    logger.info(f"[PATCH] Found '{name}' in localns, returning directly")
+                    return localns[name]
+                
+                # If we can't find it, fall back to the original implementation
+                logger.info(f"[PATCH] Could not find '{name}' in namespaces, falling back to original implementation")
+                return original_evaluate_forwardref(ref, globalns, localns)
+            
+            # Replace the function
+            pydantic.typing.evaluate_forwardref = patched_evaluate_forwardref
+            logger.info("Successfully patched pydantic.typing.evaluate_forwardref")
+            
+        except (ImportError, AttributeError) as e:
+            logger.warning(f"Could not patch pydantic.typing.evaluate_forwardref: {str(e)}")
+        
+        # Now, let's also patch typing.ForwardRef._evaluate
         # Get the original ForwardRef._evaluate method
         original_evaluate = ForwardRef._evaluate
         
-        # Define a wrapper function that adapts the method signature
-        def patched_evaluate(self, globalns, localns, recursive_guard=None, **kwargs):
+        # Define a new implementation that handles the recursive_guard parameter correctly
+        def new_evaluate(self, globalns, localns, recursive_guard=None):
             """
-            Patched version of ForwardRef._evaluate for Python 3.12+.
-            
-            This wrapper handles the recursive_guard parameter correctly,
-            making it compatible with both pydantic v1 and Python 3.12.
+            Patched version of ForwardRef._evaluate that handles the recursive_guard parameter correctly.
+            This works with both Pydantic v1 and Python 3.12.
             """
-            logger.debug(f"Patched ForwardRef._evaluate called for {self}")
+            logger.info(f"[PATCH] ForwardRef._evaluate called for {self.__forward_arg__}")
             
-            # In Python 3.12, recursive_guard is handled internally
-            # So we can safely ignore it if provided
+            # If recursive_guard is None, create a new set
+            if recursive_guard is None:
+                recursive_guard = set()
+            
+            # Check if we're in a recursive loop
+            if self.__forward_arg__ in recursive_guard:
+                logger.info(f"[PATCH] Recursive reference detected for {self.__forward_arg__}")
+                return None
+            
+            # Add the current forward reference to the recursive guard
+            recursive_guard.add(self.__forward_arg__)
+            
+            # Try to evaluate the forward reference
             try:
-                # Call the original method without recursive_guard
-                return original_evaluate(self, globalns, localns)
+                # First, try to evaluate using the original method
+                try:
+                    # Call the original method with the recursive_guard parameter
+                    logger.info(f"[PATCH] Attempting to evaluate {self.__forward_arg__} using original method")
+                    return original_evaluate(self, globalns, localns, recursive_guard)
+                except TypeError as e:
+                    # If we get a TypeError, it might be because the original method doesn't accept recursive_guard
+                    if "got multiple values for argument 'recursive_guard'" in str(e):
+                        logger.info(f"[PATCH] TypeError with recursive_guard, using direct evaluation for {self.__forward_arg__}")
+                        # Try to evaluate the forward reference directly
+                        if self.__forward_arg__ in globalns:
+                            logger.info(f"[PATCH] Found {self.__forward_arg__} in globalns")
+                            return globalns[self.__forward_arg__]
+                        if self.__forward_arg__ in localns:
+                            logger.info(f"[PATCH] Found {self.__forward_arg__} in localns")
+                            return localns[self.__forward_arg__]
+                        # If we can't find it, try to evaluate it as an expression
+                        logger.info(f"[PATCH] Evaluating {self.__forward_arg__} as an expression")
+                        return eval(self.__forward_arg__, globalns, localns)
+                    else:
+                        # If it's a different TypeError, re-raise it
+                        logger.info(f"[PATCH] Unexpected TypeError: {e}")
+                        raise
             except Exception as e:
-                logger.error(f"Error in patched ForwardRef._evaluate: {str(e)}")
+                # If we get any other exception, log it and re-raise
+                logger.info(f"[PATCH] Exception during evaluation: {e}")
                 raise
+            finally:
+                # Remove the current forward reference from the recursive guard
+                recursive_guard.remove(self.__forward_arg__)
         
         # Replace the method
-        ForwardRef._evaluate = patched_evaluate
+        ForwardRef._evaluate = new_evaluate
         logger.info("Successfully applied Python 3.12 ForwardRef patch")
         return True
         
     except Exception as e:
         logger.error(f"Failed to apply Python 3.12 ForwardRef patch: {str(e)}")
+        logger.error(traceback.format_exc())
         return False
 
 def patch_distutils() -> bool:
