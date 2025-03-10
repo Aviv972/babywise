@@ -308,21 +308,27 @@ def patch_python312_forwardref() -> bool:
                 globalns: Global namespace
                 localns: Local namespace
                 type_params: Type parameters (new in Python 3.12)
-                recursive_guard: Set of names being evaluated to prevent recursion
+                recursive_guard: Set or frozenset of names being evaluated to prevent recursion
             """
             logger.info(f"[PATCH] ForwardRef._evaluate called for {self.__forward_arg__}")
             
-            # If recursive_guard is None, create a new set
+            # Handle both set and frozenset for recursive_guard
             if recursive_guard is None:
-                recursive_guard = set()
+                working_guard = set()
+            elif isinstance(recursive_guard, frozenset):
+                # If we get a frozenset, convert to a regular set for modification
+                logger.info("[PATCH] Converting frozenset recursive_guard to set")
+                working_guard = set(recursive_guard)
+            else:
+                working_guard = recursive_guard
             
             # Check if we're in a recursive loop
-            if self.__forward_arg__ in recursive_guard:
+            if self.__forward_arg__ in working_guard:
                 logger.info(f"[PATCH] Recursive reference detected for {self.__forward_arg__}")
                 return None
             
-            # Add the current forward reference to the recursive guard
-            recursive_guard.add(self.__forward_arg__)
+            # Add the current forward reference to the working guard
+            working_guard.add(self.__forward_arg__)
             
             try:
                 # Try to evaluate the forward reference directly first
@@ -341,18 +347,24 @@ def patch_python312_forwardref() -> bool:
                     return value
                 except Exception as e:
                     logger.info(f"[PATCH] Error evaluating {self.__forward_arg__}: {e}")
-                    # If evaluation fails, try the original method without recursive_guard
+                    # If evaluation fails, try the original method
                     try:
-                        if type_params is not None:
-                            return original_evaluate(self, globalns, localns, type_params)
+                        # Convert working_guard back to frozenset if that's what we received
+                        if isinstance(recursive_guard, frozenset):
+                            final_guard = frozenset(working_guard)
                         else:
-                            return original_evaluate(self, globalns, localns)
+                            final_guard = working_guard
+                            
+                        if type_params is not None:
+                            return original_evaluate(self, globalns, localns, type_params, recursive_guard=final_guard)
+                        else:
+                            return original_evaluate(self, globalns, localns, recursive_guard=final_guard)
                     except Exception as orig_e:
                         logger.info(f"[PATCH] Error in original evaluate: {orig_e}")
                         raise
             finally:
-                # Remove the current forward reference from the recursive guard
-                recursive_guard.remove(self.__forward_arg__)
+                # Remove the current forward reference from the working guard
+                working_guard.discard(self.__forward_arg__)
         
         # Replace the method
         ForwardRef._evaluate = new_evaluate
