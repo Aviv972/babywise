@@ -82,9 +82,10 @@ except Exception as e:
 # Import custom modules
 try:
     from api.thread_summary import thread_summary_fallback
-    logger.info("Successfully imported thread_summary module")
+    from backend.api.chat import router as chat_router
+    logger.info("Successfully imported thread_summary and chat modules")
 except Exception as e:
-    logger.error(f"Failed to import thread_summary module: {str(e)}")
+    logger.error(f"Failed to import modules: {str(e)}")
     # Define a fallback function if import fails
     async def thread_summary_fallback(thread_id: str, request: Request, backend_available: bool = False):
         return JSONResponse({
@@ -115,6 +116,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Mount routers
+app.include_router(chat_router, prefix="/api")
 
 # Root path handler to serve a simple HTML page
 @app.get("/", response_class=HTMLResponse)
