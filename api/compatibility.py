@@ -536,6 +536,57 @@ def patch_distutils() -> bool:
         logger.error(f"Failed to patch distutils: {str(e)}")
         return False
 
+def patch_aioredis_timeout() -> bool:
+    """
+    Patch aioredis TimeoutError definition for Python 3.12 compatibility.
+    
+    In Python 3.12, asyncio.TimeoutError and builtins.TimeoutError are the same class,
+    which causes a duplicate base class error in aioredis's exception definition.
+    
+    Returns:
+        bool: True if patch was applied successfully, False otherwise
+    """
+    try:
+        import sys
+        import asyncio
+        import builtins
+        
+        # Only apply this patch for Python 3.12+
+        if sys.version_info < (3, 12):
+            logger.info("Python version is below 3.12, skipping aioredis TimeoutError patch")
+            return False
+            
+        logger.info("Applying aioredis TimeoutError patch")
+        
+        try:
+            import aioredis.exceptions
+            from aioredis.exceptions import RedisError
+            
+            # Create a new TimeoutError class with only unique base classes
+            if asyncio.TimeoutError is builtins.TimeoutError:
+                # If they're the same, only use one of them
+                class PatchedTimeoutError(asyncio.TimeoutError, RedisError):
+                    pass
+            else:
+                # If they're different (shouldn't happen in 3.12+, but just in case)
+                class PatchedTimeoutError(asyncio.TimeoutError, builtins.TimeoutError, RedisError):
+                    pass
+            
+            # Replace the original TimeoutError
+            aioredis.exceptions.TimeoutError = PatchedTimeoutError
+            logger.info("Successfully patched aioredis TimeoutError")
+            
+            return True
+            
+        except (ImportError, AttributeError) as e:
+            logger.warning(f"Could not patch aioredis TimeoutError: {str(e)}")
+            return False
+            
+    except Exception as e:
+        logger.error(f"Failed to apply aioredis TimeoutError patch: {str(e)}")
+        logger.error(traceback.format_exc())
+        return False
+
 def apply_all_patches() -> Dict[str, bool]:
     """
     Apply all compatibility patches and return their status.
@@ -562,6 +613,9 @@ def apply_all_patches() -> Dict[str, bool]:
     
     # Apply direct pydantic patch
     results["direct_pydantic_patch"] = apply_direct_pydantic_patch()
+    
+    # Apply aioredis TimeoutError patch
+    results["aioredis_timeout_patch"] = patch_aioredis_timeout()
     
     # Apply distutils patch
     results["distutils_patch"] = patch_distutils()
