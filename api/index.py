@@ -82,16 +82,50 @@ except Exception as e:
 # Import custom modules
 try:
     from api.thread_summary import thread_summary_fallback
-    from backend.api.chat import router as chat_router
-    logger.info("Successfully imported thread_summary and chat modules")
+    logger.info("Successfully imported thread_summary module")
 except Exception as e:
-    logger.error(f"Failed to import modules: {str(e)}")
+    logger.error(f"Failed to import thread_summary module: {str(e)}")
     # Define a fallback function if import fails
     async def thread_summary_fallback(thread_id: str, request: Request, backend_available: bool = False):
         return JSONResponse({
             "error": "Thread summary module not available",
             "status": "error"
         })
+
+# Import chat router separately to ensure it's always defined
+chat_router = None
+try:
+    from backend.api.chat import router as chat_router
+    logger.info("Successfully imported chat router")
+except Exception as e:
+    logger.error(f"Failed to import chat router: {str(e)}")
+    # Create a minimal fallback router
+    from fastapi import APIRouter
+    chat_router = APIRouter(prefix="/chat")
+    
+    @chat_router.post("")
+    async def chat_fallback():
+        return JSONResponse({
+            "response": "Chat service is currently unavailable. Please try again later.",
+            "command_processed": False,
+            "command_type": None,
+            "command_data": None
+        })
+    
+    @chat_router.get("/context/{thread_id}")
+    async def get_context_fallback(thread_id: str):
+        return JSONResponse({
+            "error": "Context service is currently unavailable",
+            "status": "error"
+        })
+    
+    @chat_router.post("/reset/{thread_id}")
+    async def reset_thread_fallback(thread_id: str):
+        return JSONResponse({
+            "error": "Reset service is currently unavailable",
+            "status": "error"
+        })
+    logger.info("Created fallback chat router")
 
 # Import debug modules
 try:
