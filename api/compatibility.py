@@ -188,41 +188,38 @@ def patch_pydantic_typing_extra() -> bool:
                     logger.info(f"[PATCH] Value is not a ForwardRef: {value}, returning as is")
                     return value
                 
-                # Call the original function
+                # Try to evaluate the forward reference directly first
                 try:
-                    return original_eval_type_backport(value, globalns, localns, type_params)
-                except AssertionError as e:
-                    # If we get an AssertionError, it might be because of the ForwardRef check
-                    if "isinstance(value, typing.ForwardRef)" in str(e):
-                        logger.info(f"[PATCH] AssertionError in eval_type_backport, handling manually")
-                        # Try to evaluate the forward reference directly
-                        name = getattr(value, '_name', None) or getattr(value, '__forward_arg__', None)
-                        if name:
-                            if name in globalns:
-                                logger.info(f"[PATCH] Found '{name}' in globalns")
-                                return globalns[name]
-                            if name in localns:
-                                logger.info(f"[PATCH] Found '{name}' in localns")
-                                return localns[name]
-                            # If we can't find it, try to evaluate it as an expression
-                            try:
-                                logger.info(f"[PATCH] Evaluating '{name}' as an expression")
-                                return eval(name, globalns, localns)
-                            except Exception as eval_error:
-                                logger.info(f"[PATCH] Error evaluating '{name}': {eval_error}")
-                                # Return the original value as a fallback
-                                return value
-                        else:
-                            logger.info(f"[PATCH] Could not get name from ForwardRef: {value}")
-                            return value
-                    else:
-                        # If it's a different AssertionError, re-raise it
-                        logger.info(f"[PATCH] Unexpected AssertionError: {e}")
-                        raise
+                    name = getattr(value, '_name', None) or getattr(value, '__forward_arg__', None)
+                    if name:
+                        if name in globalns:
+                            logger.info(f"[PATCH] Found '{name}' in globalns")
+                            return globalns[name]
+                        if name in localns:
+                            logger.info(f"[PATCH] Found '{name}' in localns")
+                            return localns[name]
+                        
+                        # If we can't find it directly, try to evaluate it
+                        try:
+                            logger.info(f"[PATCH] Evaluating '{name}' as an expression")
+                            result = eval(name, globalns, localns)
+                            logger.info(f"[PATCH] Successfully evaluated '{name}'")
+                            return result
+                        except Exception as eval_error:
+                            logger.info(f"[PATCH] Error evaluating '{name}': {eval_error}")
                 except Exception as e:
-                    # If we get any other exception, log it and re-raise
-                    logger.info(f"[PATCH] Exception during eval_type_backport: {e}")
-                    raise
+                    logger.info(f"[PATCH] Error during direct evaluation: {e}")
+                
+                # If direct evaluation fails, try the original function
+                try:
+                    if type_params is not None:
+                        return original_eval_type_backport(value, globalns, localns, type_params)
+                    else:
+                        return original_eval_type_backport(value, globalns, localns)
+                except Exception as e:
+                    logger.info(f"[PATCH] Error in original eval_type_backport: {e}")
+                    # If all else fails, return the original value
+                    return value
             
             # Replace the function
             pydantic._internal._typing_extra.eval_type_backport = patched_eval_type_backport
@@ -302,10 +299,16 @@ def patch_python312_forwardref() -> bool:
         original_evaluate = ForwardRef._evaluate
         
         # Define a new implementation that handles the recursive_guard parameter correctly
-        def new_evaluate(self, globalns, localns, recursive_guard=None):
+        def new_evaluate(self, globalns, localns, type_params=None, recursive_guard=None):
             """
             Patched version of ForwardRef._evaluate that handles the recursive_guard parameter correctly.
             This works with both Pydantic v1 and Python 3.12.
+            
+            Args:
+                globalns: Global namespace
+                localns: Local namespace
+                type_params: Type parameters (new in Python 3.12)
+                recursive_guard: Set of names being evaluated to prevent recursion
             """
             logger.info(f"[PATCH] ForwardRef._evaluate called for {self.__forward_arg__}")
             
@@ -321,35 +324,32 @@ def patch_python312_forwardref() -> bool:
             # Add the current forward reference to the recursive guard
             recursive_guard.add(self.__forward_arg__)
             
-            # Try to evaluate the forward reference
             try:
-                # First, try to evaluate using the original method
+                # Try to evaluate the forward reference directly first
+                if self.__forward_arg__ in globalns:
+                    logger.info(f"[PATCH] Found {self.__forward_arg__} in globalns")
+                    return globalns[self.__forward_arg__]
+                if localns is not None and self.__forward_arg__ in localns:
+                    logger.info(f"[PATCH] Found {self.__forward_arg__} in localns")
+                    return localns[self.__forward_arg__]
+                
+                # If direct lookup fails, try to evaluate as an expression
                 try:
-                    # Call the original method with the recursive_guard parameter
-                    logger.info(f"[PATCH] Attempting to evaluate {self.__forward_arg__} using original method")
-                    return original_evaluate(self, globalns, localns, recursive_guard)
-                except TypeError as e:
-                    # If we get a TypeError, it might be because the original method doesn't accept recursive_guard
-                    if "got multiple values for argument 'recursive_guard'" in str(e):
-                        logger.info(f"[PATCH] TypeError with recursive_guard, using direct evaluation for {self.__forward_arg__}")
-                        # Try to evaluate the forward reference directly
-                        if self.__forward_arg__ in globalns:
-                            logger.info(f"[PATCH] Found {self.__forward_arg__} in globalns")
-                            return globalns[self.__forward_arg__]
-                        if self.__forward_arg__ in localns:
-                            logger.info(f"[PATCH] Found {self.__forward_arg__} in localns")
-                            return localns[self.__forward_arg__]
-                        # If we can't find it, try to evaluate it as an expression
-                        logger.info(f"[PATCH] Evaluating {self.__forward_arg__} as an expression")
-                        return eval(self.__forward_arg__, globalns, localns)
-                    else:
-                        # If it's a different TypeError, re-raise it
-                        logger.info(f"[PATCH] Unexpected TypeError: {e}")
+                    logger.info(f"[PATCH] Evaluating {self.__forward_arg__} as an expression")
+                    value = eval(self.__forward_arg__, globalns, localns)
+                    logger.info(f"[PATCH] Successfully evaluated {self.__forward_arg__}")
+                    return value
+                except Exception as e:
+                    logger.info(f"[PATCH] Error evaluating {self.__forward_arg__}: {e}")
+                    # If evaluation fails, try the original method without recursive_guard
+                    try:
+                        if type_params is not None:
+                            return original_evaluate(self, globalns, localns, type_params)
+                        else:
+                            return original_evaluate(self, globalns, localns)
+                    except Exception as orig_e:
+                        logger.info(f"[PATCH] Error in original evaluate: {orig_e}")
                         raise
-            except Exception as e:
-                # If we get any other exception, log it and re-raise
-                logger.info(f"[PATCH] Exception during evaluation: {e}")
-                raise
             finally:
                 # Remove the current forward reference from the recursive guard
                 recursive_guard.remove(self.__forward_arg__)
