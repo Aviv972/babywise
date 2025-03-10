@@ -150,6 +150,89 @@ def apply_direct_pydantic_patch() -> bool:
         logger.error(f"Failed to apply direct pydantic patch: {str(e)}")
         return False
 
+def patch_pydantic_typing_extra() -> bool:
+    """
+    Patch Pydantic's internal typing extra module to handle ForwardRef evaluation issues.
+    
+    This specifically addresses the AssertionError in eval_type_backport where it expects
+    a typing.ForwardRef instance.
+    
+    Returns:
+        bool: True if patch was applied successfully, False otherwise
+    """
+    try:
+        logger.info("Applying patch for Pydantic's _typing_extra module")
+        
+        # Try to import the module
+        try:
+            import pydantic._internal._typing_extra
+            
+            # Store the original function
+            original_eval_type_backport = pydantic._internal._typing_extra.eval_type_backport
+            
+            # Define a patched version that handles non-ForwardRef values
+            def patched_eval_type_backport(value, globalns, localns, type_params=None):
+                """
+                Patched version of eval_type_backport that handles non-ForwardRef values.
+                """
+                logger.info(f"[PATCH] pydantic._internal._typing_extra.eval_type_backport called for {value}")
+                
+                # Check if value is a ForwardRef
+                if not isinstance(value, ForwardRef):
+                    logger.info(f"[PATCH] Value is not a ForwardRef: {value}, returning as is")
+                    return value
+                
+                # Call the original function
+                try:
+                    return original_eval_type_backport(value, globalns, localns, type_params)
+                except AssertionError as e:
+                    # If we get an AssertionError, it might be because of the ForwardRef check
+                    if "isinstance(value, typing.ForwardRef)" in str(e):
+                        logger.info(f"[PATCH] AssertionError in eval_type_backport, handling manually")
+                        # Try to evaluate the forward reference directly
+                        name = getattr(value, '_name', None) or getattr(value, '__forward_arg__', None)
+                        if name:
+                            if name in globalns:
+                                logger.info(f"[PATCH] Found '{name}' in globalns")
+                                return globalns[name]
+                            if name in localns:
+                                logger.info(f"[PATCH] Found '{name}' in localns")
+                                return localns[name]
+                            # If we can't find it, try to evaluate it as an expression
+                            try:
+                                logger.info(f"[PATCH] Evaluating '{name}' as an expression")
+                                return eval(name, globalns, localns)
+                            except Exception as eval_error:
+                                logger.info(f"[PATCH] Error evaluating '{name}': {eval_error}")
+                                # Return the original value as a fallback
+                                return value
+                        else:
+                            logger.info(f"[PATCH] Could not get name from ForwardRef: {value}")
+                            return value
+                    else:
+                        # If it's a different AssertionError, re-raise it
+                        logger.info(f"[PATCH] Unexpected AssertionError: {e}")
+                        raise
+                except Exception as e:
+                    # If we get any other exception, log it and re-raise
+                    logger.info(f"[PATCH] Exception during eval_type_backport: {e}")
+                    raise
+            
+            # Replace the function
+            pydantic._internal._typing_extra.eval_type_backport = patched_eval_type_backport
+            logger.info("Successfully patched pydantic._internal._typing_extra.eval_type_backport")
+            
+            return True
+            
+        except (ImportError, AttributeError) as e:
+            logger.warning(f"Could not patch pydantic._internal._typing_extra: {str(e)}")
+            return False
+            
+    except Exception as e:
+        logger.error(f"Failed to apply Pydantic typing extra patch: {str(e)}")
+        logger.error(traceback.format_exc())
+        return False
+
 def patch_python312_forwardref() -> bool:
     """
     Apply a specific patch for Python 3.12's ForwardRef implementation.
@@ -267,6 +350,10 @@ def patch_python312_forwardref() -> bool:
         
         # Replace the method
         ForwardRef._evaluate = new_evaluate
+        
+        # Also apply the patch for Pydantic's _typing_extra module
+        patch_pydantic_typing_extra()
+        
         logger.info("Successfully applied Python 3.12 ForwardRef patch")
         return True
         
@@ -452,7 +539,7 @@ def apply_all_patches() -> Dict[str, bool]:
         logger.error(f"Failed to set up environment: {str(e)}")
         results["environment_setup"] = False
     
-    # Apply Python 3.12 ForwardRef patch
+    # Apply Python 3.12 ForwardRef patch (which now includes the _typing_extra patch)
     results["python312_forwardref_patch"] = patch_python312_forwardref()
     
     # Apply direct pydantic patch
