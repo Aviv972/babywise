@@ -171,7 +171,7 @@ def patch_python312_forwardref() -> bool:
         original_evaluate = ForwardRef._evaluate
         
         # Define a wrapper function that adapts the method signature
-        def patched_evaluate(self, globalns, localns, recursive_guard=None):
+        def patched_evaluate(self, globalns, localns, recursive_guard=None, **kwargs):
             """
             Patched version of ForwardRef._evaluate for Python 3.12+.
             
@@ -183,6 +183,7 @@ def patch_python312_forwardref() -> bool:
             # In Python 3.12, recursive_guard is handled internally
             # So we can safely ignore it if provided
             try:
+                # Call the original method without recursive_guard
                 return original_evaluate(self, globalns, localns)
             except Exception as e:
                 logger.error(f"Error in patched ForwardRef._evaluate: {str(e)}")
