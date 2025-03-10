@@ -86,7 +86,7 @@ async def generate_response(state: Dict[str, Any]) -> Dict[str, Any]:
             # Initialize the LLM
             logger.info("Initializing ChatOpenAI")
             llm = ChatOpenAI(
-                model="gpt-4o-mini",
+                model="gpt-3.5-turbo",
                 temperature=0.4,
                 openai_api_key=openai_api_key
             )
