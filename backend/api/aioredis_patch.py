@@ -101,6 +101,18 @@ def apply_patch():
             """Channel operation failed"""
             pass
 
+        class MaxClientsError(ConnectionError):
+            """Too many clients error"""
+            pass
+
+        class ConnectionClosedError(ConnectionError):
+            """Connection was closed"""
+            pass
+
+        class ProtocolError(RedisError):
+            """Protocol parsing error"""
+            pass
+
         # Register all exception classes in the module
         exception_classes = [
             RedisError,
@@ -121,7 +133,10 @@ def apply_patch():
             ModuleError,
             LockError,
             LockNotOwnedError,
-            ChannelError
+            ChannelError,
+            MaxClientsError,
+            ConnectionClosedError,
+            ProtocolError
         ]
 
         for cls in exception_classes:
@@ -131,13 +146,19 @@ def apply_patch():
         # Register the patched module
         sys.modules['aioredis.exceptions'] = aioredis_exceptions
         
-        # Verify the patch
+        # Verify the patch by importing critical exceptions
         try:
             from aioredis.exceptions import (
                 AuthenticationWrongNumberOfArgsError,
                 AuthenticationError,
                 ConnectionError,
-                TimeoutError
+                TimeoutError,
+                BusyLoadingError,
+                InvalidResponse,
+                ResponseError,
+                DataError,
+                PubSubError,
+                WatchError
             )
             logger.info("Successfully verified critical exception imports")
             return True
