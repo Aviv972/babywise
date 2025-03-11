@@ -16,10 +16,16 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Log startup information
+logger.info("=== API STARTUP ===")
+logger.info(f"Python version: {sys.version}")
+logger.info(f"Current directory: {os.getcwd()}")
+logger.info(f"File location: {__file__}")
+
 # Import aioredis patch before any other imports
 try:
     logger.info("Importing aioredis_patch module...")
-    from api.aioredis_patch import patch_result as aioredis_patch_result
+    from backend.api.aioredis_patch import patch_result as aioredis_patch_result
     logger.info(f"aioredis patch result: {aioredis_patch_result}")
     
     # Verify we can import AuthenticationError
@@ -56,14 +62,14 @@ from datetime import datetime, timezone
 from typing import Dict, List, Optional, Any, Union
 
 # Import compatibility patches
-from api.compatibility import apply_all_patches
+from backend.api.compatibility import apply_all_patches
 
 # Apply all compatibility patches
 patch_results = apply_all_patches()
 logger.info(f"Compatibility patch results: {patch_results}")
 
 # Add the project root to the Python path first
-root_dir = Path(__file__).parent.parent
+root_dir = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(root_dir))
 logger.info(f"Added {root_dir} to Python path")
 
@@ -76,7 +82,7 @@ os.environ.setdefault("STORAGE_URL", os.environ.get("STORAGE_URL", ""))
 # Import compatibility module to apply patches before any other imports
 try:
     logger.info("Importing compatibility module")
-    from api.compatibility import patch_results
+    from backend.api.compatibility import patch_results
     logger.info(f"Compatibility patches applied: {patch_results}")
 except Exception as e:
     logger.error(f"Failed to import compatibility module: {str(e)}")
@@ -102,7 +108,7 @@ except Exception as e:
 
 # Import custom modules
 try:
-    from api.thread_summary import thread_summary_fallback
+    from backend.api.thread_summary import thread_summary_fallback
     logger.info("Successfully imported thread_summary module")
 except Exception as e:
     logger.error(f"Failed to import thread_summary module: {str(e)}")
@@ -163,7 +169,7 @@ except Exception as e:
 
 # Import debug modules
 try:
-    from api.debug_openai import router as debug_openai_router
+    from backend.api.debug_openai import router as debug_openai_router
     logger.info("Successfully imported debug_openai module")
 except Exception as e:
     logger.error(f"Failed to import debug_openai module: {str(e)}")
@@ -184,6 +190,48 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Add request logging middleware
+@app.middleware("http")
+async def log_requests(request: Request, call_next):
+    """Log all incoming requests and their responses"""
+    request_id = str(uuid.uuid4())
+    logger.info(f"Request {request_id} started: {request.method} {request.url.path}")
+    
+    # Log request headers
+    headers = dict(request.headers)
+    logger.info(f"Request {request_id} headers: {headers}")
+    
+    # Try to log request body for POST requests
+    if request.method in ["POST", "PUT", "PATCH"]:
+        try:
+            body = await request.body()
+            # Store the body content for later use
+            request._body = body
+            if body:
+                try:
+                    # Try to parse as JSON
+                    body_str = body.decode()
+                    json_body = json.loads(body_str)
+                    logger.info(f"Request {request_id} body (JSON): {json_body}")
+                except:
+                    # Log as raw string if not JSON
+                    logger.info(f"Request {request_id} body (raw): {body}")
+        except Exception as e:
+            logger.error(f"Error reading request body: {e}")
+    
+    try:
+        # Process the request
+        response = await call_next(request)
+        logger.info(f"Request {request_id} completed: {response.status_code}")
+        return response
+    except Exception as e:
+        logger.error(f"Request {request_id} failed with error: {str(e)}")
+        logger.error(traceback.format_exc())
+        return JSONResponse(
+            status_code=500,
+            content={"detail": "Internal server error", "error": str(e)}
+        )
 
 # Define request/response models directly
 from pydantic import BaseModel

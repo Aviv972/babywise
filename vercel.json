@@ -2,20 +2,19 @@
     "version": 2,
     "builds": [
         {
-            "src": "api/index.py",
+            "src": "backend/api/index.py",
             "use": "@vercel/python",
             "config": {
                 "runtime": "python3.12",
                 "maxLambdaSize": "50mb",
                 "includeFiles": [
                     "backend/**",
-                    "api/**",
                     "static/**",
                     "frontend/**"
                 ],
                 "memory": 1024,
                 "maxDuration": 60,
-                "installCommand": "pip install --no-deps -r api/requirements.txt && pip install pydantic==2.1.1 vercel-kv==0.1.5"
+                "installCommand": "pip install --no-deps -r requirements.txt && pip install pydantic==2.1.1 vercel-kv==0.1.5"
             }
         },
         {
@@ -29,10 +28,10 @@
     ],
     "routes": [
         { "src": "/static/(.*)", "dest": "/static/$1" },
-        { "src": "/api/routines/events/latest", "dest": "/api/index.py" },
-        { "src": "/api/routines/events(.*)", "dest": "/api/index.py" },
-        { "src": "/api/routines/(.*)", "dest": "/api/index.py" },
-        { "src": "/api/(.*)", "dest": "/api/index.py" },
+        { "src": "/api/routines/events/latest", "dest": "/backend/api/index.py" },
+        { "src": "/api/routines/events(.*)", "dest": "/backend/api/index.py" },
+        { "src": "/api/routines/(.*)", "dest": "/backend/api/index.py" },
+        { "src": "/api/(.*)", "dest": "/backend/api/index.py" },
         { "src": "/(.*\\.(js|css|svg|png|jpg|jpeg|gif|ico))", "dest": "/frontend/$1" },
         { "src": "/(.*)", "dest": "/frontend/index.html" }
     ],
