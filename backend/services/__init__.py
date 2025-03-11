@@ -1,5 +1,7 @@
 """
-Babywise Chatbot - Services
+Services package for the backend
+"""
 
-This package contains service modules for the Babywise Chatbot.
-""" 
+from . import redis_service
+
+__all__ = ['redis_service'] 

@@ -9,6 +9,7 @@ This file is designed to be imported at the very beginning of the application.
 import sys
 import logging
 import traceback
+from types import ModuleType
 
 # Set up logging
 logging.basicConfig(
@@ -37,91 +38,88 @@ def apply_patch():
         logger.info("Pre-patching aioredis TimeoutError for Python 3.12 compatibility")
         
         # Create a module to hold our patched exceptions
-        import types
-        aioredis_exceptions = types.ModuleType('aioredis.exceptions')
+        aioredis_exceptions = ModuleType('aioredis.exceptions')
         
-        # Create base exception classes
-        class RedisError(Exception): pass
-        aioredis_exceptions.RedisError = RedisError
-        logger.info("Created RedisError base class")
-        
-        # Create the patched TimeoutError
-        if asyncio.TimeoutError is builtins.TimeoutError:
-            # If they're the same, only use one of them
-            class TimeoutError(asyncio.TimeoutError, RedisError): pass
-        else:
-            # If they're different (shouldn't happen in 3.12+, but just in case)
-            class TimeoutError(asyncio.TimeoutError, builtins.TimeoutError, RedisError): pass
-        
-        aioredis_exceptions.TimeoutError = TimeoutError
-        logger.info("Created TimeoutError class")
-        
-        # Add other necessary exception classes
-        class ConnectionError(RedisError): pass
-        class ProtocolError(RedisError): pass
-        class WatchError(RedisError): pass
-        class ConnectionClosedError(ConnectionError): pass
-        class PoolClosedError(ConnectionError): pass
-        class AuthenticationError(ConnectionError): pass
-        class ResponseError(RedisError): pass
-        class DataError(RedisError): pass
-        class PubSubError(RedisError): pass
-        class ExecAbortError(ResponseError): pass
-        class ReadOnlyError(ResponseError): pass
-        class NoScriptError(ResponseError): pass
-        class ScriptError(ResponseError): pass
-        class BusyLoadingError(ResponseError): pass
-        class InvalidResponse(RedisError): pass
-        class NotSupportedError(RedisError): pass
-        class ClusterError(RedisError): pass
-        class ClusterDownError(ClusterError): pass
-        class ClusterCrossSlotError(ClusterError): pass
-        
-        # Register all exception classes
-        aioredis_exceptions.ConnectionError = ConnectionError
-        aioredis_exceptions.ProtocolError = ProtocolError
-        aioredis_exceptions.WatchError = WatchError
-        aioredis_exceptions.ConnectionClosedError = ConnectionClosedError
-        aioredis_exceptions.PoolClosedError = PoolClosedError
-        aioredis_exceptions.AuthenticationError = AuthenticationError
-        aioredis_exceptions.ResponseError = ResponseError
-        aioredis_exceptions.DataError = DataError
-        aioredis_exceptions.PubSubError = PubSubError
-        aioredis_exceptions.ExecAbortError = ExecAbortError
-        aioredis_exceptions.ReadOnlyError = ReadOnlyError
-        aioredis_exceptions.NoScriptError = NoScriptError
-        aioredis_exceptions.ScriptError = ScriptError
-        aioredis_exceptions.BusyLoadingError = BusyLoadingError
-        aioredis_exceptions.InvalidResponse = InvalidResponse
-        aioredis_exceptions.NotSupportedError = NotSupportedError
-        aioredis_exceptions.ClusterError = ClusterError
-        aioredis_exceptions.ClusterDownError = ClusterDownError
-        aioredis_exceptions.ClusterCrossSlotError = ClusterCrossSlotError
-        
-        logger.info("Created and registered all exception classes")
-        
-        # Verify AuthenticationError is properly registered
-        if hasattr(aioredis_exceptions, 'AuthenticationError'):
-            logger.info(f"AuthenticationError is registered: {aioredis_exceptions.AuthenticationError}")
-        else:
-            logger.error("AuthenticationError is NOT registered!")
-        
-        # Register the module
+        # Define base exception classes
+        class RedisError(Exception):
+            pass
+
+        class ConnectionError(RedisError):
+            pass
+
+        class ProtocolError(RedisError):
+            pass
+
+        class WatchError(RedisError):
+            pass
+
+        class ConnectionClosedError(ConnectionError):
+            pass
+
+        class MaxClientsError(ConnectionError):
+            pass
+
+        class AuthenticationError(ConnectionError):
+            pass
+
+        class AuthenticationWrongNumberOfArgsError(AuthenticationError):
+            pass
+
+        class TimeoutError(RedisError):
+            pass
+
+        class BusyLoadingError(ConnectionError):
+            pass
+
+        class InvalidResponse(RedisError):
+            pass
+
+        class ResponseError(RedisError):
+            pass
+
+        class DataError(RedisError):
+            pass
+
+        class PubSubError(RedisError):
+            pass
+
+        class WatchVariableError(WatchError):
+            pass
+
+        # Register all exception classes in the module
+        exception_classes = [
+            RedisError,
+            ConnectionError,
+            ProtocolError,
+            WatchError,
+            ConnectionClosedError,
+            MaxClientsError,
+            AuthenticationError,
+            AuthenticationWrongNumberOfArgsError,
+            TimeoutError,
+            BusyLoadingError,
+            InvalidResponse,
+            ResponseError,
+            DataError,
+            PubSubError,
+            WatchVariableError
+        ]
+
+        for cls in exception_classes:
+            setattr(aioredis_exceptions, cls.__name__, cls)
+
+        # Register the patched module
         sys.modules['aioredis.exceptions'] = aioredis_exceptions
         
-        # Verify the module is registered
-        if 'aioredis.exceptions' in sys.modules:
-            logger.info("aioredis.exceptions module is registered in sys.modules")
-        else:
-            logger.error("aioredis.exceptions module is NOT registered in sys.modules!")
-        
-        # Verify we can import from the patched module
+        # Verify the patch
         try:
-            from aioredis.exceptions import AuthenticationError as TestAuthError
-            logger.info(f"Successfully imported AuthenticationError from patched module: {TestAuthError}")
+            from aioredis.exceptions import AuthenticationWrongNumberOfArgsError
+            logger.info(f"Successfully imported AuthenticationWrongNumberOfArgsError after patching: {AuthenticationWrongNumberOfArgsError}")
         except ImportError as e:
-            logger.error(f"Failed to import AuthenticationError from patched module: {e}")
-        
+            logger.error(f"Failed to verify AuthenticationWrongNumberOfArgsError import after patching: {e}")
+            logger.error(traceback.format_exc())
+            return False
+
         logger.info("Successfully pre-patched aioredis.exceptions module")
         return True
     except Exception as e:

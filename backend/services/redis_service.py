@@ -11,6 +11,7 @@ import asyncio
 import aioredis
 from typing import Optional, Dict, Any, List
 from datetime import datetime, timedelta
+from enum import Enum
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -36,6 +37,12 @@ REDIS_CONNECTION_TIMEOUT = 10.0
 
 # In-memory fallback cache when Redis is unavailable
 _memory_cache: Dict[str, Dict[str, Any]] = {}
+
+class RedisKeyPrefix(str, Enum):
+    """Redis key prefixes for different types of data."""
+    THREAD_STATE = "thread_state"
+    EVENT = "event"
+    THREAD_EVENTS = "thread_events"
 
 async def initialize_redis() -> Optional[aioredis.Redis]:
     """Initialize Redis connection with timeout"""
@@ -220,17 +227,17 @@ async def delete_cache(key: str) -> bool:
 # Thread state operations
 async def get_thread_state(thread_id: str) -> Optional[Dict[str, Any]]:
     """Get thread state from Redis or memory cache"""
-    key = f"{THREAD_STATE_PREFIX}{thread_id}"
+    key = f"{RedisKeyPrefix.THREAD_STATE}:{thread_id}"
     return await get_cache(key)
 
 async def save_thread_state(thread_id: str, state: Dict[str, Any]) -> bool:
     """Save thread state to Redis or memory cache"""
-    key = f"{THREAD_STATE_PREFIX}{thread_id}"
+    key = f"{RedisKeyPrefix.THREAD_STATE}:{thread_id}"
     return await set_cache(key, state, THREAD_STATE_EXPIRATION)
 
 async def delete_thread_state(thread_id: str) -> bool:
     """Delete thread state from Redis and memory cache"""
-    key = f"{THREAD_STATE_PREFIX}{thread_id}"
+    key = f"{RedisKeyPrefix.THREAD_STATE}:{thread_id}"
     return await delete_cache(key)
 
 # Routine-specific cache operations
@@ -278,4 +285,24 @@ async def invalidate_routine_cache(thread_id: str, routine_type: str) -> bool:
         return True
     except Exception as e:
         logger.error(f"Error invalidating routine cache: {str(e)}")
-        return False 
+        return False
+
+async def get_thread_events(thread_id: str) -> List[Dict[str, Any]]:
+    """Get all events for a thread from Redis."""
+    try:
+        redis = await get_redis()
+        key = f"{RedisKeyPrefix.THREAD_EVENTS}:{thread_id}"
+        
+        event_keys = await redis.lrange(key, 0, -1)
+        events = []
+        
+        for event_key in event_keys:
+            event_json = await redis.get(event_key)
+            if event_json:
+                events.append(json.loads(event_json))
+        
+        return events
+        
+    except Exception as e:
+        logger.error(f"Error getting thread events: {e}")
+        raise 
