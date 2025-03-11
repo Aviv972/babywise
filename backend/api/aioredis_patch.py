@@ -97,6 +97,10 @@ def apply_patch():
             """Lock is not owned by this client"""
             pass
 
+        class ChildDeadlockedError(RedisError):
+            """Child process deadlocked"""
+            pass
+
         class ChannelError(RedisError):
             """Channel operation failed"""
             pass
@@ -111,6 +115,18 @@ def apply_patch():
 
         class ProtocolError(RedisError):
             """Protocol parsing error"""
+            pass
+
+        class ReplicationError(RedisError):
+            """Replication error"""
+            pass
+
+        class MasterDownError(ReplicationError):
+            """Master is down"""
+            pass
+
+        class SlaveError(ReplicationError):
+            """Slave error"""
             pass
 
         # Register all exception classes in the module
@@ -133,10 +149,14 @@ def apply_patch():
             ModuleError,
             LockError,
             LockNotOwnedError,
+            ChildDeadlockedError,
             ChannelError,
             MaxClientsError,
             ConnectionClosedError,
-            ProtocolError
+            ProtocolError,
+            ReplicationError,
+            MasterDownError,
+            SlaveError
         ]
 
         for cls in exception_classes:
@@ -158,7 +178,8 @@ def apply_patch():
                 ResponseError,
                 DataError,
                 PubSubError,
-                WatchError
+                WatchError,
+                ChildDeadlockedError
             )
             logger.info("Successfully verified critical exception imports")
             return True
