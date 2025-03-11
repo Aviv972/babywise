@@ -173,8 +173,8 @@ logger.info(f"FastAPI version: {fastapi.__version__}")
 logger.info(f"Pydantic version: {pydantic.__version__}")
 logger.info(f"Starlette version: {starlette.__version__}")
 
-# Create a FastAPI app
-app = FastAPI(title="Babywise Assistant API")
+# Create FastAPI app
+app = FastAPI()
 
 # Add CORS middleware
 app.add_middleware(
@@ -185,8 +185,222 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Define request/response models directly
+from pydantic import BaseModel
+from typing import Dict, Any, Optional, List
+
+class ChatRequest(BaseModel):
+    message: str
+    thread_id: Optional[str] = None
+    language: Optional[str] = "en"
+    local_event_id: Optional[str] = None
+
+class ChatResponse(BaseModel):
+    response: str
+    command_processed: bool = False
+    command_type: Optional[str] = None
+    command_data: Optional[Dict[str, Any]] = None
+
+# Direct implementation of chat endpoints
+@app.post("/api/chat", response_model=ChatResponse)
+async def direct_chat(request: ChatRequest):
+    """
+    Direct implementation of the chat endpoint to bypass import issues.
+    """
+    logger.info(f"Direct chat endpoint called with message: {request.message}")
+    
+    try:
+        # Try to use the backend chat implementation if available
+        try:
+            import backend.workflow.workflow as workflow
+            import backend.services.redis_service as redis_service
+            from backend.models.message_types import HumanMessage, AIMessage
+            
+            logger.info("Successfully imported backend modules")
+            
+            # Get or create thread ID
+            thread_id = request.thread_id or f"default_{request.language}"
+            
+            # Try to get thread state from Redis
+            state = None
+            try:
+                state = await redis_service.get_thread_state(thread_id)
+                logger.info(f"Retrieved thread state from Redis for {thread_id}")
+            except Exception as e:
+                logger.error(f"Error retrieving thread state: {str(e)}")
+            
+            # Create new state if not found
+            if not state:
+                state = workflow.get_default_state()
+                state["metadata"]["language"] = request.language
+                state["metadata"]["thread_id"] = thread_id
+                logger.info(f"Created new thread state for {thread_id}")
+            
+            # Add user message to state
+            user_message = HumanMessage(content=request.message)
+            state["messages"].append(user_message)
+            
+            # Get workflow instance
+            workflow_instance = await workflow.get_workflow()
+            
+            if workflow_instance:
+                # Process the message
+                result = await workflow_instance.invoke(state)
+                
+                # Get the last message (AI response)
+                last_message = result["messages"][-1]
+                if not isinstance(last_message, AIMessage):
+                    last_message = AIMessage(content="I'm sorry, I couldn't process your request.")
+                
+                # Save thread state to Redis
+                try:
+                    await redis_service.save_thread_state(thread_id, result)
+                    logger.info(f"Saved thread state to Redis for {thread_id}")
+                except Exception as e:
+                    logger.error(f"Error saving thread state: {str(e)}")
+                
+                # Check if command was processed
+                command_processed = result.get("skip_chat", False)
+                command_data = None
+                command_type = None
+                
+                if command_processed and "command_result" in result:
+                    command_result = result["command_result"]
+                    command_type = command_result.get("response_type")
+                    command_data = command_result.get("event_data")
+                
+                return ChatResponse(
+                    response=last_message.content,
+                    command_processed=command_processed,
+                    command_type=command_type,
+                    command_data=command_data
+                )
+            else:
+                logger.error("Failed to initialize workflow")
+                raise Exception("Failed to initialize workflow")
+                
+        except Exception as e:
+            logger.error(f"Error using backend chat implementation: {str(e)}")
+            logger.error(traceback.format_exc())
+            raise
+            
+    except Exception as e:
+        logger.error(f"Error in direct chat endpoint: {str(e)}")
+        logger.error(traceback.format_exc())
+        
+        # Return a fallback response
+        return ChatResponse(
+            response=f"I apologize, but I'm having trouble processing your request. The system is experiencing technical difficulties.",
+            command_processed=False,
+            command_type=None,
+            command_data=None
+        )
+
+@app.get("/api/chat/context/{thread_id}")
+async def direct_get_context(thread_id: str):
+    """
+    Direct implementation of the context endpoint to bypass import issues.
+    """
+    logger.info(f"Direct context endpoint called for thread: {thread_id}")
+    
+    try:
+        # Try to use the backend implementation if available
+        try:
+            import backend.services.redis_service as redis_service
+            
+            # Get thread state from Redis
+            state = await redis_service.get_thread_state(thread_id)
+            
+            if state:
+                # Extract messages
+                messages = []
+                for msg in state.get("messages", []):
+                    msg_type = "human" if msg.get("type") == "human" else "ai"
+                    messages.append({
+                        "content": msg.get("content", ""),
+                        "type": msg_type
+                    })
+                
+                return JSONResponse({
+                    "thread_id": thread_id,
+                    "messages": messages,
+                    "status": "success"
+                })
+            else:
+                return JSONResponse({
+                    "thread_id": thread_id,
+                    "messages": [],
+                    "status": "empty"
+                })
+                
+        except Exception as e:
+            logger.error(f"Error using backend context implementation: {str(e)}")
+            logger.error(traceback.format_exc())
+            raise
+            
+    except Exception as e:
+        logger.error(f"Error in direct context endpoint: {str(e)}")
+        logger.error(traceback.format_exc())
+        
+        # Return a fallback response
+        return JSONResponse({
+            "thread_id": thread_id,
+            "messages": [],
+            "status": "error",
+            "error": str(e)
+        })
+
+@app.post("/api/chat/reset/{thread_id}")
+async def direct_reset_thread(thread_id: str):
+    """
+    Direct implementation of the reset endpoint to bypass import issues.
+    """
+    logger.info(f"Direct reset endpoint called for thread: {thread_id}")
+    
+    try:
+        # Try to use the backend implementation if available
+        try:
+            import backend.services.redis_service as redis_service
+            
+            # Delete thread state from Redis
+            success = await redis_service.delete_thread_state(thread_id)
+            
+            if success:
+                return JSONResponse({
+                    "thread_id": thread_id,
+                    "status": "success",
+                    "message": "Thread reset successfully"
+                })
+            else:
+                return JSONResponse({
+                    "thread_id": thread_id,
+                    "status": "error",
+                    "message": "Failed to reset thread"
+                })
+                
+        except Exception as e:
+            logger.error(f"Error using backend reset implementation: {str(e)}")
+            logger.error(traceback.format_exc())
+            raise
+            
+    except Exception as e:
+        logger.error(f"Error in direct reset endpoint: {str(e)}")
+        logger.error(traceback.format_exc())
+        
+        # Return a fallback response
+        return JSONResponse({
+            "thread_id": thread_id,
+            "status": "error",
+            "error": str(e)
+        })
+
 # Mount routers
-app.include_router(chat_router, prefix="/api")
+try:
+    app.include_router(chat_router, prefix="/api")
+    logger.info("Mounted chat router")
+except Exception as e:
+    logger.error(f"Failed to mount chat router: {str(e)}")
+    logger.error(traceback.format_exc())
 
 # Root path handler to serve a simple HTML page
 @app.get("/", response_class=HTMLResponse)
@@ -259,3 +473,176 @@ async def root():
 async def favicon():
     """Serve a simple favicon to prevent 404 errors."""
     # This is a minimal 16x16 favicon (base64 encoded)
+
+# Direct implementation of routine endpoints
+@app.get("/api/routines/events")
+async def direct_get_events(thread_id: Optional[str] = None, start_date: Optional[str] = None, end_date: Optional[str] = None):
+    """
+    Direct implementation of the get events endpoint to bypass import issues.
+    """
+    logger.info(f"Direct get events endpoint called for thread: {thread_id}")
+    
+    try:
+        # Try to use the backend implementation if available
+        try:
+            import backend.db.routine_db as routine_db
+            
+            events = await routine_db.get_events(thread_id, start_date, end_date)
+            
+            return JSONResponse({
+                "events": events,
+                "status": "success"
+            })
+                
+        except Exception as e:
+            logger.error(f"Error using backend get events implementation: {str(e)}")
+            logger.error(traceback.format_exc())
+            raise
+            
+    except Exception as e:
+        logger.error(f"Error in direct get events endpoint: {str(e)}")
+        logger.error(traceback.format_exc())
+        
+        # Return a fallback response
+        return JSONResponse({
+            "events": [],
+            "status": "error",
+            "error": str(e)
+        })
+
+@app.post("/api/routines/events")
+async def direct_add_event(request: Request):
+    """
+    Direct implementation of the add event endpoint to bypass import issues.
+    """
+    try:
+        # Parse request body
+        body = await request.json()
+        logger.info(f"Direct add event endpoint called with body: {body}")
+        
+        # Try to use the backend implementation if available
+        try:
+            import backend.db.routine_db as routine_db
+            
+            event = await routine_db.add_event(
+                thread_id=body.get("thread_id"),
+                event_type=body.get("event_type"),
+                event_time=body.get("event_time"),
+                event_data=body.get("event_data"),
+                local_id=body.get("local_id")
+            )
+            
+            return JSONResponse({
+                "event": event,
+                "status": "success"
+            })
+                
+        except Exception as e:
+            logger.error(f"Error using backend add event implementation: {str(e)}")
+            logger.error(traceback.format_exc())
+            raise
+            
+    except Exception as e:
+        logger.error(f"Error in direct add event endpoint: {str(e)}")
+        logger.error(traceback.format_exc())
+        
+        # Return a fallback response
+        return JSONResponse({
+            "status": "error",
+            "error": str(e)
+        })
+
+@app.get("/api/routines/events/latest/{thread_id}/{event_type}")
+async def direct_get_latest_event(thread_id: str, event_type: str):
+    """
+    Direct implementation of the get latest event endpoint to bypass import issues.
+    """
+    logger.info(f"Direct get latest event endpoint called for thread: {thread_id}, event type: {event_type}")
+    
+    try:
+        # Try to use the backend implementation if available
+        try:
+            import backend.db.routine_db as routine_db
+            
+            event = await routine_db.get_latest_event(thread_id, event_type)
+            
+            return JSONResponse({
+                "event": event,
+                "status": "success"
+            })
+                
+        except Exception as e:
+            logger.error(f"Error using backend get latest event implementation: {str(e)}")
+            logger.error(traceback.format_exc())
+            raise
+            
+    except Exception as e:
+        logger.error(f"Error in direct get latest event endpoint: {str(e)}")
+        logger.error(traceback.format_exc())
+        
+        # Return a fallback response
+        return JSONResponse({
+            "event": None,
+            "status": "error",
+            "error": str(e)
+        })
+
+@app.get("/api/routines/summary/{thread_id}")
+async def direct_get_summary(thread_id: str, period: str = "day"):
+    """
+    Direct implementation of the get summary endpoint to bypass import issues.
+    """
+    logger.info(f"Direct get summary endpoint called for thread: {thread_id}, period: {period}")
+    
+    try:
+        # Try to use the backend implementation if available
+        try:
+            import backend.db.routine_db as routine_db
+            
+            summary = await routine_db.get_summary(thread_id, period)
+            
+            return JSONResponse({
+                "summary": summary,
+                "status": "success"
+            })
+                
+        except Exception as e:
+            logger.error(f"Error using backend get summary implementation: {str(e)}")
+            logger.error(traceback.format_exc())
+            raise
+            
+    except Exception as e:
+        logger.error(f"Error in direct get summary endpoint: {str(e)}")
+        logger.error(traceback.format_exc())
+        
+        # Return a fallback response
+        return JSONResponse({
+            "summary": {
+                "sleep": {"total_duration": 0, "events": []},
+                "feed": {"total_count": 0, "events": []}
+            },
+            "status": "error",
+            "error": str(e)
+        })
+
+@app.get("/api/health")
+async def health_check():
+    """
+    Health check endpoint to verify the API is running.
+    """
+    logger.info("Health check endpoint called")
+    
+    # Check if backend modules are available
+    backend_available = False
+    try:
+        import backend.workflow.workflow
+        import backend.services.redis_service
+        backend_available = True
+    except Exception as e:
+        logger.error(f"Backend modules not available: {str(e)}")
+    
+    return JSONResponse({
+        "status": "ok",
+        "backend_available": backend_available,
+        "timestamp": datetime.now(timezone.utc).isoformat()
+    })
