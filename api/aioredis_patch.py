@@ -2,8 +2,7 @@
 # -*- coding: utf-8 -*-
 
 """
-Patch for aioredis to fix incompatibility with Python 3.12.
-This file is designed to be imported at the very beginning of the application.
+Patch for aioredis compatibility with Python 3.12
 """
 
 import sys
@@ -11,125 +10,154 @@ import logging
 import traceback
 from types import ModuleType
 
-# Set up logging
+# Configure logging with more detailed format
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    datefmt='%Y-%m-%d %H:%M:%S',
+    format='%(asctime)s - %(name)s - %(levelname)s - [%(filename)s:%(lineno)d] - %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S'
 )
 logger = logging.getLogger(__name__)
 
 def apply_patch():
-    """
-    Apply patch for aioredis TimeoutError for Python 3.12 compatibility.
-    
-    Returns:
-        bool: True if patch was applied successfully, False otherwise
-    """
+    """Apply patches for aioredis compatibility."""
     try:
-        import asyncio
-        import builtins
-        
-        # Only apply this patch for Python 3.12+
-        if sys.version_info < (3, 12):
-            logger.info("Python version is below 3.12, skipping aioredis TimeoutError patch")
-            return False
-            
-        logger.info("Pre-patching aioredis TimeoutError for Python 3.12 compatibility")
-        
-        # Create a module to hold our patched exceptions
+        # Create module to hold patched exceptions
         aioredis_exceptions = ModuleType('aioredis.exceptions')
         
         # Define base exception classes
         class RedisError(Exception):
+            """Base exception for Redis errors"""
             pass
 
         class ConnectionError(RedisError):
-            pass
-
-        class ProtocolError(RedisError):
-            pass
-
-        class WatchError(RedisError):
-            pass
-
-        class ConnectionClosedError(ConnectionError):
-            pass
-
-        class MaxClientsError(ConnectionError):
-            pass
-
-        class AuthenticationError(ConnectionError):
-            pass
-
-        class AuthenticationWrongNumberOfArgsError(AuthenticationError):
+            """Connection related errors"""
             pass
 
         class TimeoutError(RedisError):
+            """Redis operation timeout"""
+            pass
+
+        class AuthenticationError(ConnectionError):
+            """Authentication failed"""
+            pass
+
+        class AuthenticationWrongNumberOfArgsError(AuthenticationError):
+            """Authentication failed due to wrong number of arguments"""
             pass
 
         class BusyLoadingError(ConnectionError):
+            """Redis server is busy loading data"""
             pass
 
         class InvalidResponse(RedisError):
+            """Invalid response from Redis"""
             pass
 
         class ResponseError(RedisError):
+            """Redis command error"""
             pass
 
         class DataError(RedisError):
+            """Invalid data format"""
             pass
 
         class PubSubError(RedisError):
+            """Pub/Sub operation errors"""
             pass
 
-        class WatchVariableError(WatchError):
+        class WatchError(RedisError):
+            """Watch command failed"""
+            pass
+
+        class NoScriptError(ResponseError):
+            """Script does not exist"""
+            pass
+
+        class ExecAbortError(ResponseError):
+            """Transaction aborted"""
+            pass
+
+        class ReadOnlyError(ResponseError):
+            """Read only mode"""
+            pass
+
+        class NoPermissionError(ResponseError):
+            """No permission to execute command"""
+            pass
+
+        class ModuleError(ResponseError):
+            """Module command failed"""
+            pass
+
+        class LockError(RedisError):
+            """Lock operation failed"""
+            pass
+
+        class LockNotOwnedError(LockError):
+            """Lock is not owned by this client"""
+            pass
+
+        class ChannelError(RedisError):
+            """Channel operation failed"""
             pass
 
         # Register all exception classes in the module
         exception_classes = [
             RedisError,
             ConnectionError,
-            ProtocolError,
-            WatchError,
-            ConnectionClosedError,
-            MaxClientsError,
+            TimeoutError,
             AuthenticationError,
             AuthenticationWrongNumberOfArgsError,
-            TimeoutError,
             BusyLoadingError,
             InvalidResponse,
             ResponseError,
             DataError,
             PubSubError,
-            WatchVariableError
+            WatchError,
+            NoScriptError,
+            ExecAbortError,
+            ReadOnlyError,
+            NoPermissionError,
+            ModuleError,
+            LockError,
+            LockNotOwnedError,
+            ChannelError
         ]
 
         for cls in exception_classes:
             setattr(aioredis_exceptions, cls.__name__, cls)
+            logger.debug(f"Registered exception class: {cls.__name__}")
 
         # Register the patched module
         sys.modules['aioredis.exceptions'] = aioredis_exceptions
         
         # Verify the patch
         try:
-            from aioredis.exceptions import AuthenticationWrongNumberOfArgsError
-            logger.info(f"Successfully imported AuthenticationWrongNumberOfArgsError after patching: {AuthenticationWrongNumberOfArgsError}")
+            from aioredis.exceptions import (
+                AuthenticationWrongNumberOfArgsError,
+                AuthenticationError,
+                ConnectionError,
+                TimeoutError
+            )
+            logger.info("Successfully verified critical exception imports")
+            return True
         except ImportError as e:
-            logger.error(f"Failed to verify AuthenticationWrongNumberOfArgsError import after patching: {e}")
+            logger.error(f"Failed to verify exception imports after patching: {e}")
             logger.error(traceback.format_exc())
             return False
 
-        logger.info("Successfully pre-patched aioredis.exceptions module")
-        return True
     except Exception as e:
-        logger.error(f"Failed to pre-patch aioredis: {str(e)}")
+        logger.error(f"Error applying aioredis patch: {e}")
         logger.error(traceback.format_exc())
         return False
 
-# Apply the patch when the module is imported
+# Apply the patch and store the result
 patch_result = apply_patch()
-logger.info(f"aioredis patch result: {patch_result}")
+
+if patch_result:
+    logger.info("Successfully applied aioredis patch")
+else:
+    logger.error("Failed to apply aioredis patch")
 
 # Export the patch result for other modules to check
 __all__ = ['patch_result'] 

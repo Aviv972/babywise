@@ -9,12 +9,16 @@ import json
 import logging
 import asyncio
 import aioredis
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any, List, Tuple
 from datetime import datetime, timedelta
 from enum import Enum
 
-# Configure logging
-logging.basicConfig(level=logging.INFO)
+# Configure logging with more detailed format
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - [%(filename)s:%(lineno)d] - %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S'
+)
 logger = logging.getLogger(__name__)
 
 # Redis client instance
@@ -43,233 +47,212 @@ class RedisKeyPrefix(str, Enum):
     THREAD_STATE = "thread_state"
     EVENT = "event"
     THREAD_EVENTS = "thread_events"
+    ROUTINE_SUMMARY = "routine_summary"
+    RECENT_EVENTS = "recent_events"
+    ACTIVE_ROUTINE = "active_routine"
 
-async def initialize_redis() -> Optional[aioredis.Redis]:
-    """Initialize Redis connection with timeout"""
-    global _redis_client
-    
-    if _redis_client is not None:
-        try:
-            # Test if the existing connection is still valid
-            await asyncio.wait_for(_redis_client.ping(), timeout=2.0)
-            return _redis_client
-        except Exception as e:
-            logger.warning(f"Existing Redis connection is invalid, reconnecting: {str(e)}")
-            _redis_client = None
-        
-    try:
-        redis_url = os.environ.get("STORAGE_URL")
-        if not redis_url:
-            logger.error("Redis URL not found in environment variables")
-            return None
-        
-        # Log Redis connection attempt (without exposing credentials)
-        masked_url = redis_url.replace(redis_url.split('@')[0] if '@' in redis_url else redis_url, '***:***@')
-        logger.info(f"Attempting to connect to Redis at {masked_url}")
-        
-        # Use asyncio.wait_for to add a timeout
-        try:
-            _redis_client = await asyncio.wait_for(
-                aioredis.from_url(
-                    redis_url, 
-                    socket_timeout=REDIS_CONNECTION_TIMEOUT,
-                    socket_connect_timeout=REDIS_CONNECTION_TIMEOUT,
+class CacheEntry:
+    """Class to represent a cached entry with metadata."""
+    def __init__(self, value: Any, expiration: int):
+        self.value = value
+        self.created_at = datetime.now()
+        self.expires_at = self.created_at + timedelta(seconds=expiration)
+        self.access_count = 0
+        self.last_accessed = self.created_at
+
+    def is_expired(self) -> bool:
+        return datetime.now() > self.expires_at
+
+    def access(self) -> None:
+        self.access_count += 1
+        self.last_accessed = datetime.now()
+
+class RedisManager:
+    """Class to manage Redis connection and operations."""
+    def __init__(self):
+        self._client: Optional[aioredis.Redis] = None
+        self._memory_cache: Dict[str, CacheEntry] = {}
+        self._last_connection_attempt = datetime.min
+        self._connection_backoff = 1  # Initial backoff in seconds
+        self._max_backoff = 30  # Maximum backoff in seconds
+        self._connection_lock = asyncio.Lock()
+
+    async def get_client(self) -> Optional[aioredis.Redis]:
+        """Get Redis client with connection management."""
+        if self._client is not None:
+            try:
+                await self._client.ping()
+                return self._client
+            except Exception as e:
+                logger.warning(f"Redis connection test failed: {e}")
+                self._client = None
+
+        # Use lock to prevent multiple simultaneous connection attempts
+        async with self._connection_lock:
+            # Check if we should attempt reconnection based on backoff
+            now = datetime.now()
+            if (now - self._last_connection_attempt).total_seconds() < self._connection_backoff:
+                return None
+
+            try:
+                redis_url = os.environ.get("STORAGE_URL")
+                if not redis_url:
+                    logger.error("STORAGE_URL environment variable not set")
+                    return None
+
+                # Mask credentials in URL for logging
+                masked_url = redis_url.replace(redis_url.split('@')[0] if '@' in redis_url else redis_url, '***:***@')
+                logger.info(f"Attempting Redis connection to {masked_url}")
+
+                self._client = await aioredis.from_url(
+                    redis_url,
+                    encoding="utf-8",
+                    decode_responses=True,
+                    socket_timeout=10.0,
+                    socket_connect_timeout=5.0,
                     retry_on_timeout=True
-                ),
-                timeout=REDIS_CONNECTION_TIMEOUT
-            )
-            
-            # Test connection with ping
-            await asyncio.wait_for(_redis_client.ping(), timeout=2.0)
-            
-            logger.info("Redis client initialized successfully")
-            return _redis_client
-        except (asyncio.TimeoutError, aioredis.RedisError) as e:
-            logger.error(f"Redis connection failed: {str(e)}")
-            return None
-    except Exception as e:
-        logger.error(f"Error initializing Redis client: {str(e)}")
+                )
+
+                # Test connection
+                await self._client.ping()
+                
+                # Reset backoff on successful connection
+                self._connection_backoff = 1
+                logger.info("Redis connection established successfully")
+                return self._client
+
+            except Exception as e:
+                logger.error(f"Redis connection failed: {e}")
+                self._client = None
+                
+                # Implement exponential backoff
+                self._last_connection_attempt = now
+                self._connection_backoff = min(self._connection_backoff * 2, self._max_backoff)
+                return None
+
+    async def get(self, key: str) -> Optional[Any]:
+        """Get value from Redis with fallback to memory cache."""
+        # Check memory cache first
+        if key in self._memory_cache:
+            entry = self._memory_cache[key]
+            if not entry.is_expired():
+                entry.access()
+                return entry.value
+            else:
+                del self._memory_cache[key]
+
+        # Try Redis
+        client = await self.get_client()
+        if client:
+            try:
+                value = await client.get(key)
+                if value:
+                    parsed = json.loads(value)
+                    # Update memory cache
+                    self._memory_cache[key] = CacheEntry(parsed, 3600)
+                    return parsed
+            except Exception as e:
+                logger.error(f"Redis get operation failed for key {key}: {e}")
+
         return None
 
-async def ensure_redis_initialized() -> bool:
-    """Ensure Redis is initialized and ready for use"""
-    try:
-        redis = await initialize_redis()
-        if redis is None:
-            logger.warning("Redis client is None, initialization failed")
-            return False
-            
-        # Test connection by pinging Redis with timeout
-        try:
-            await asyncio.wait_for(redis.ping(), timeout=2.0)
-            logger.info("Redis ping successful")
-            return True
-        except (asyncio.TimeoutError, aioredis.RedisError) as e:
-            logger.error(f"Redis ping failed: {str(e)}")
-            return False
-        except Exception as e:
-            logger.error(f"Redis ping failed: {str(e)}")
-            return False
-    except Exception as e:
-        logger.error(f"Error ensuring Redis is initialized: {str(e)}")
-        return False
+    async def set(self, key: str, value: Any, expiration: int = 3600) -> bool:
+        """Set value in Redis with fallback to memory cache."""
+        # Always update memory cache
+        self._memory_cache[key] = CacheEntry(value, expiration)
 
-async def get_redis() -> Optional[aioredis.Redis]:
-    """Get Redis client instance"""
-    if _redis_client is None:
-        return await initialize_redis()
-    return _redis_client
-
-async def set_cache(key: str, value: Any, expiration: int = 3600) -> bool:
-    """Set a value in Redis cache with memory fallback"""
-    try:
-        redis = await get_redis()
-        if redis:
+        # Try Redis
+        client = await self.get_client()
+        if client:
             try:
-                value_json = json.dumps(value)
-                await asyncio.wait_for(
-                    redis.set(key, value_json, ex=expiration),
-                    timeout=5.0
-                )
+                await client.set(key, json.dumps(value), ex=expiration)
                 return True
             except Exception as e:
-                logger.warning(f"Redis set failed, using memory fallback: {str(e)}")
-                # Fall through to memory cache
-        
-        # Fallback to memory cache if Redis is unavailable or failed
-        logger.info(f"Using memory cache for key: {key}")
-        _memory_cache[key] = {
-            "value": value,
-            "expires_at": datetime.now() + timedelta(seconds=expiration)
-        }
-        return True
-    except Exception as e:
-        logger.error(f"Error setting cache: {str(e)}")
-        # Fallback to memory cache
-        _memory_cache[key] = {
-            "value": value,
-            "expires_at": datetime.now() + timedelta(seconds=expiration)
-        }
-        return True
+                logger.error(f"Redis set operation failed for key {key}: {e}")
 
-async def get_cache(key: str) -> Optional[Any]:
-    """Get a value from Redis cache with memory fallback"""
-    try:
-        # First check memory cache for faster access
-        if key in _memory_cache:
-            cache_entry = _memory_cache[key]
-            if cache_entry["expires_at"] > datetime.now():
-                logger.debug(f"Using memory cache for key: {key}")
-                return cache_entry["value"]
-            else:
-                # Remove expired entry
-                del _memory_cache[key]
-        
-        # Try Redis if memory cache didn't have it
-        redis = await get_redis()
-        if redis:
+        return False
+
+    async def delete(self, key: str) -> bool:
+        """Delete value from Redis and memory cache."""
+        # Always remove from memory cache
+        self._memory_cache.pop(key, None)
+
+        # Try Redis
+        client = await self.get_client()
+        if client:
             try:
-                value = await asyncio.wait_for(
-                    redis.get(key),
-                    timeout=5.0
-                )
-                if value:
-                    parsed_value = json.loads(value)
-                    # Update memory cache for faster future access
-                    _memory_cache[key] = {
-                        "value": parsed_value,
-                        "expires_at": datetime.now() + timedelta(seconds=3600)  # Default 1 hour
-                    }
-                    return parsed_value
+                await client.delete(key)
+                return True
             except Exception as e:
-                logger.warning(f"Redis get failed: {str(e)}")
-                # Fall through to return None
-                
-        return None
-    except Exception as e:
-        logger.error(f"Error getting cache: {str(e)}")
-        # Try memory cache as last resort
-        if key in _memory_cache:
-            cache_entry = _memory_cache[key]
-            if cache_entry["expires_at"] > datetime.now():
-                return cache_entry["value"]
-            else:
-                del _memory_cache[key]
-        return None
+                logger.error(f"Redis delete operation failed for key {key}: {e}")
 
-async def delete_cache(key: str) -> bool:
-    """Delete a value from Redis cache and memory cache"""
-    try:
-        # Remove from memory cache
-        if key in _memory_cache:
-            del _memory_cache[key]
-            
-        # Try to remove from Redis if available
-        redis = await get_redis()
-        if redis:
-            try:
-                await asyncio.wait_for(
-                    redis.delete(key),
-                    timeout=5.0
-                )
-            except Exception as e:
-                logger.warning(f"Redis delete failed: {str(e)}")
-                # Already removed from memory cache, so still return True
-            
-        return True
-    except Exception as e:
-        logger.error(f"Error deleting cache: {str(e)}")
-        # At least try to remove from memory cache
-        if key in _memory_cache:
-            del _memory_cache[key]
-        return True
+        return False
 
-# Thread state operations
+# Global Redis manager instance
+_redis_manager = RedisManager()
+
+# Expose high-level functions
+async def get_redis() -> Optional[aioredis.Redis]:
+    """Get Redis client instance."""
+    return await _redis_manager.get_client()
+
 async def get_thread_state(thread_id: str) -> Optional[Dict[str, Any]]:
-    """Get thread state from Redis or memory cache"""
+    """Get thread state with robust error handling."""
     key = f"{RedisKeyPrefix.THREAD_STATE}:{thread_id}"
-    return await get_cache(key)
+    try:
+        return await _redis_manager.get(key)
+    except Exception as e:
+        logger.error(f"Error getting thread state for {thread_id}: {e}")
+        return None
 
 async def save_thread_state(thread_id: str, state: Dict[str, Any]) -> bool:
-    """Save thread state to Redis or memory cache"""
+    """Save thread state with robust error handling."""
     key = f"{RedisKeyPrefix.THREAD_STATE}:{thread_id}"
-    return await set_cache(key, state, THREAD_STATE_EXPIRATION)
+    try:
+        return await _redis_manager.set(key, state, 86400)  # 24 hours
+    except Exception as e:
+        logger.error(f"Error saving thread state for {thread_id}: {e}")
+        return False
 
 async def delete_thread_state(thread_id: str) -> bool:
-    """Delete thread state from Redis and memory cache"""
+    """Delete thread state with robust error handling."""
     key = f"{RedisKeyPrefix.THREAD_STATE}:{thread_id}"
-    return await delete_cache(key)
+    try:
+        return await _redis_manager.delete(key)
+    except Exception as e:
+        logger.error(f"Error deleting thread state for {thread_id}: {e}")
+        return False
 
 # Routine-specific cache operations
 async def cache_routine_summary(thread_id: str, routine_type: str, summary: Dict[str, Any]) -> bool:
     """Cache a routine summary"""
     key = f"{ROUTINE_SUMMARY_PREFIX}{thread_id}:{routine_type}"
-    return await set_cache(key, summary, SUMMARY_EXPIRATION)
+    return await _redis_manager.set(key, summary, SUMMARY_EXPIRATION)
 
 async def get_cached_routine_summary(thread_id: str, routine_type: str) -> Optional[Dict[str, Any]]:
     """Get a cached routine summary"""
     key = f"{ROUTINE_SUMMARY_PREFIX}{thread_id}:{routine_type}"
-    return await get_cache(key)
+    return await _redis_manager.get(key)
 
 async def cache_recent_events(thread_id: str, routine_type: str, events: List[Dict[str, Any]]) -> bool:
     """Cache recent routine events"""
     key = f"{RECENT_EVENTS_PREFIX}{thread_id}:{routine_type}"
-    return await set_cache(key, events, RECENT_EVENTS_EXPIRATION)
+    return await _redis_manager.set(key, events, RECENT_EVENTS_EXPIRATION)
 
 async def get_cached_recent_events(thread_id: str, routine_type: str) -> Optional[List[Dict[str, Any]]]:
     """Get cached recent events"""
     key = f"{RECENT_EVENTS_PREFIX}{thread_id}:{routine_type}"
-    return await get_cache(key)
+    return await _redis_manager.get(key)
 
 async def cache_active_routine(thread_id: str, routine_type: str, routine_data: Dict[str, Any]) -> bool:
     """Cache an active routine"""
     key = f"{ACTIVE_ROUTINE_PREFIX}{thread_id}:{routine_type}"
-    return await set_cache(key, routine_data, ACTIVE_ROUTINE_EXPIRATION)
+    return await _redis_manager.set(key, routine_data, ACTIVE_ROUTINE_EXPIRATION)
 
 async def get_active_routine(thread_id: str, routine_type: str) -> Optional[Dict[str, Any]]:
     """Get an active routine"""
     key = f"{ACTIVE_ROUTINE_PREFIX}{thread_id}:{routine_type}"
-    return await get_cache(key)
+    return await _redis_manager.get(key)
 
 async def invalidate_routine_cache(thread_id: str, routine_type: str) -> bool:
     """Invalidate all cached data for a routine type"""
@@ -281,7 +264,7 @@ async def invalidate_routine_cache(thread_id: str, routine_type: str) -> bool:
         ]
         
         for key in keys:
-            await delete_cache(key)
+            await _redis_manager.delete(key)
         return True
     except Exception as e:
         logger.error(f"Error invalidating routine cache: {str(e)}")
