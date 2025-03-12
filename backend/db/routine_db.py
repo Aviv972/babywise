@@ -10,8 +10,8 @@ import json
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Any, Union
 from backend.services.redis_service import (
-    get_redis, RedisKeyPrefix, get_with_fallback, set_with_fallback, 
-    delete_with_fallback, add_event_to_thread, execute_list_command
+    redis_connection, RedisKeyPrefix, get_with_fallback, set_with_fallback, 
+    delete_with_fallback, add_event_to_thread, list_append
 )
 
 logger = logging.getLogger(__name__)
@@ -99,63 +99,67 @@ async def get_events(
         else:
             end_dt = end_date
     
-    client = None
+    events = []
     try:
-        client = await get_redis()
-        if not client:
-            logger.error("Failed to get Redis connection for retrieving events")
-            return []
-        
-        # Get the thread's event keys
-        thread_events_key = f"{RedisKeyPrefix.THREAD_EVENTS}:{thread_id}"
-        event_keys = await client.lrange(thread_events_key, 0, -1)
-        
-        if not event_keys:
-            logger.info(f"No events found for thread {thread_id}")
-            return []
-        
-        # Fetch and filter events
-        events = []
-        for event_key in event_keys:
-            try:
-                # Get event data
-                event_json = await client.get(event_key)
+        async with redis_connection() as client:
+            if not client:
+                logger.error("Failed to get Redis connection for retrieving events")
+                return []
+            
+            # Get the thread's event keys
+            thread_events_key = f"{RedisKeyPrefix.THREAD_EVENTS}:{thread_id}"
+            event_keys = await client.lrange(thread_events_key, 0, -1)
+            
+            if not event_keys:
+                logger.info(f"No events found for thread {thread_id}")
+                return []
+            
+            # Use pipeline for efficient batch retrieval
+            pipe = client.pipeline()
+            for key in event_keys:
+                pipe.get(key)
+            
+            results = await pipe.execute()
+            
+            # Process and filter events
+            for i, event_json in enumerate(results):
                 if not event_json:
                     continue
                 
-                event = json.loads(event_json)
-                
-                # Apply type filter if specified
-                if event_type and event.get("event_type") != event_type:
-                    continue
-                
-                # Parse event time for date filtering
                 try:
-                    event_time_str = event.get("event_time", "")
-                    if not event_time_str:
+                    event = json.loads(event_json)
+                    
+                    # Apply type filter if specified
+                    if event_type and event.get("event_type") != event_type:
                         continue
                     
-                    event_dt = datetime.fromisoformat(event_time_str.replace("Z", "+00:00"))
-                    
-                    # Apply date filters
-                    if start_dt and event_dt < start_dt:
+                    # Parse event time for date filtering
+                    try:
+                        event_time_str = event.get("event_time", "")
+                        if not event_time_str:
+                            continue
+                        
+                        event_dt = datetime.fromisoformat(event_time_str.replace("Z", "+00:00"))
+                        
+                        # Apply date filters
+                        if start_dt and event_dt < start_dt:
+                            continue
+                        if end_dt and event_dt > end_dt:
+                            continue
+                        
+                        # Event passed all filters
+                        events.append(event)
+                        
+                    except (ValueError, TypeError) as e:
+                        logger.warning(f"Error parsing event time '{event.get('event_time')}': {e}")
                         continue
-                    if end_dt and event_dt > end_dt:
-                        continue
-                    
-                    # Event passed all filters
-                    events.append(event)
-                    
-                except (ValueError, TypeError) as e:
-                    logger.warning(f"Error parsing event time '{event.get('event_time')}': {e}")
+                        
+                except json.JSONDecodeError:
+                    logger.warning(f"Error decoding JSON for event key {event_keys[i]}")
                     continue
-                    
-            except json.JSONDecodeError:
-                logger.warning(f"Error decoding JSON for event key {event_key}")
-                continue
-            except Exception as e:
-                logger.warning(f"Error processing event key {event_key}: {e}")
-                continue
+                except Exception as e:
+                    logger.warning(f"Error processing event key {event_keys[i]}: {e}")
+                    continue
         
         # Sort events by time
         sorted_events = sorted(events, key=lambda x: x.get("event_time", ""))
@@ -165,14 +169,6 @@ async def get_events(
     except Exception as e:
         logger.error(f"Error getting events: {e}")
         return []
-    finally:
-        # Always clean up the connection
-        if client:
-            try:
-                client.close()
-                await client.wait_closed()
-            except Exception:
-                pass
 
 async def get_latest_event(thread_id: str, event_type: str) -> Optional[Dict[str, Any]]:
     """Get the latest event of a specific type for a thread with improved error handling."""
@@ -237,6 +233,7 @@ async def get_summary(thread_id: str, period: str = "day") -> Dict[str, Any]:
                 "period_name": period_name,
                 "start_date": start_date.isoformat(),
                 "end_date": now.isoformat(),
+                "thread_id": thread_id,  # Adding thread_id for better traceability
                 "routines": {}
             }
             
@@ -253,27 +250,46 @@ async def get_summary(thread_id: str, period: str = "day") -> Dict[str, Any]:
         total_sleep_duration = 0
         sleep_periods = []
         
+        # Track processed sleep end events to avoid duplicates
+        processed_sleep_ends = set()
+        
         for sleep_event in sleep_events:
             try:
                 sleep_start = datetime.fromisoformat(sleep_event.get("event_time", "").replace("Z", "+00:00"))
                 
                 # Find matching end event
-                matching_end = next(
-                    (e for e in sleep_end_events if 
-                     datetime.fromisoformat(e.get("event_time", "").replace("Z", "+00:00")) > sleep_start),
-                    None
-                )
+                matching_end = None
+                for end_event in sleep_end_events:
+                    # Skip already processed end events
+                    end_id = end_event.get("local_id")
+                    if end_id in processed_sleep_ends:
+                        continue
+                        
+                    end_time = datetime.fromisoformat(end_event.get("event_time", "").replace("Z", "+00:00"))
+                    if end_time > sleep_start:
+                        matching_end = end_event
+                        if end_id:  # Mark as processed if it has an ID
+                            processed_sleep_ends.add(end_id)
+                        break
                 
                 if matching_end:
                     sleep_end = datetime.fromisoformat(matching_end.get("event_time", "").replace("Z", "+00:00"))
                     duration_minutes = int((sleep_end - sleep_start).total_seconds() / 60)  # Duration in minutes
                     duration_hours = duration_minutes / 60  # Convert to hours
+                    
+                    # Validate duration - skip unreasonable values
+                    if duration_hours > 24:  # More than a day of sleep
+                        logger.warning(f"Unreasonable sleep duration: {duration_hours} hours. Skipping.")
+                        continue
+                    
                     total_sleep_duration += duration_hours
                     
                     sleep_periods.append({
                         "start": sleep_event.get("event_time"),
                         "end": matching_end.get("event_time"),
-                        "duration": duration_hours
+                        "duration": round(duration_hours, 2),
+                        "start_id": sleep_event.get("local_id"),
+                        "end_id": matching_end.get("local_id")
                     })
                     logger.info(f"Matched sleep period: {sleep_start} to {sleep_end}, duration: {duration_hours} hours")
             except (ValueError, AttributeError) as e:
@@ -298,6 +314,7 @@ async def get_summary(thread_id: str, period: str = "day") -> Dict[str, Any]:
             "period_name": period_name,
             "start_date": start_date.isoformat(),
             "end_date": now.isoformat(),
+            "thread_id": thread_id,  # Adding thread_id for better traceability
             "routines": {
                 "sleep": {
                     "total_events": len(sleep_periods),
@@ -325,5 +342,6 @@ async def get_summary(thread_id: str, period: str = "day") -> Dict[str, Any]:
         return {
             "period": period,
             "error": str(e),
+            "thread_id": thread_id,
             "routines": {}
         } 
