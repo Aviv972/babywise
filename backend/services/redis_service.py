@@ -219,6 +219,20 @@ async def list_append(key: str, value: str) -> bool:
     logger.debug(f"Appending to list {key}: {value}")
     return await execute_list_command(key, "rpush", value)
 
+# Add get_redis function referenced in routine_tracker.py but was missing
+async def get_redis():
+    """
+    Get a Redis connection.
+    This is a convenience function that returns the redis_connection context manager.
+    
+    Usage:
+        async with get_redis() as client:
+            # Use Redis client
+            await client.get("my_key")
+    """
+    logger.debug("Creating Redis connection via get_redis()")
+    return redis_connection()
+
 # Get multiple values from Redis in a single connection
 async def get_multiple(keys: List[str]) -> Dict[str, Any]:
     """Get multiple values from Redis in a single connection."""
