@@ -779,12 +779,32 @@ async def direct_add_event(request: Request):
         try:
             import backend.db.routine_db as routine_db
             
+            # Extract event data from request body
+            thread_id = body.get("thread_id")
+            event_type = body.get("event_type")
+            
+            # Map start_time to event_time (the field expected by routine_db)
+            event_time = body.get("start_time")
+            if not event_time:
+                event_time = body.get("event_time")  # Fallback to event_time if provided
+                
+            # Prepare event_data from notes field if present
+            event_data = body.get("event_data", {})
+            if not event_data and "notes" in body:
+                event_data = {"notes": body.get("notes")}
+                
+            # Get local_id if present
+            local_id = body.get("local_id")
+            
+            # Log the parameters being passed to add_event
+            logger.info(f"Calling add_event with: thread_id={thread_id}, event_type={event_type}, event_time={event_time}")
+            
             event = await routine_db.add_event(
-                thread_id=body.get("thread_id"),
-                event_type=body.get("event_type"),
-                event_time=body.get("event_time"),
-                event_data=body.get("event_data"),
-                local_id=body.get("local_id")
+                thread_id=thread_id,
+                event_type=event_type,
+                event_time=event_time,
+                event_data=event_data,
+                local_id=local_id
             )
             
             return JSONResponse({
