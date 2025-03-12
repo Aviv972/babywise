@@ -56,6 +56,24 @@ except ImportError as e:
     class AuthenticationError(ConnectionError): pass
     class ResponseError(RedisError): pass
     class DataError(RedisError): pass
+    
+    # Create a mock Redis module to prevent "redis is not defined" errors
+    class RedisMock:
+        """Mock Redis class to prevent errors when Redis imports fail."""
+        @staticmethod
+        async def from_url(*args, **kwargs):
+            logger.error("Using RedisMock - Redis functionality will not work")
+            return None
+        
+    # Create a Redis class with a Redis.from_url static method
+    class Redis:
+        @staticmethod
+        async def from_url(*args, **kwargs):
+            logger.error("Using Redis mock - Redis functionality will not work")
+            return None
+    
+    # Create the redis variable that would normally be imported
+    redis = RedisMock()
 
 # Redis connection configuration
 REDIS_URL = os.environ.get("STORAGE_URL", "redis://localhost:6379/0")
@@ -99,32 +117,47 @@ async def redis_connection() -> AsyncGenerator[Optional[Any], None]:
             logger.error("Redis URL not configured")
             yield None
             return
+        
+        # Check if redis module is properly initialized
+        if not redis or not hasattr(redis, 'Redis') and not hasattr(redis, 'from_url'):
+            logger.error("Redis module is not properly initialized")
+            yield None
+            return
             
-        if USE_REDIS_ASYNCIO:
-            # Modern redis.asyncio approach
-            client = await redis.Redis.from_url(
-                redis_url,
-                decode_responses=True,
-                socket_timeout=3.0,
-                socket_connect_timeout=2.0,
-                retry_on_timeout=True
-            )
-        else:
-            # Legacy aioredis approach
-            client = await redis.from_url(
-                redis_url,
-                encoding="utf-8",
-                decode_responses=True,
-                socket_timeout=3.0,
-                socket_connect_timeout=2.0,
-                retry_on_timeout=True
-            )
+        try:
+            if USE_REDIS_ASYNCIO:
+                # Modern redis.asyncio approach
+                client = await redis.Redis.from_url(
+                    redis_url,
+                    decode_responses=True,
+                    socket_timeout=3.0,
+                    socket_connect_timeout=2.0,
+                    retry_on_timeout=True
+                )
+            else:
+                # Legacy aioredis approach
+                client = await redis.from_url(
+                    redis_url,
+                    encoding="utf-8",
+                    decode_responses=True,
+                    socket_timeout=3.0,
+                    socket_connect_timeout=2.0,
+                    retry_on_timeout=True
+                )
+        except Exception as connection_error:
+            logger.error(f"Failed to create Redis client: {connection_error}")
+            yield None
+            return
         
         try:
             # Validate connection with ping
-            await client.ping()
-            # Connection is valid, yield it to the caller
-            yield client
+            if client:
+                await client.ping()
+                # Connection is valid, yield it to the caller
+                yield client
+            else:
+                logger.error("Redis client creation returned None")
+                yield None
         except Exception as e:
             # Connection failed validation
             logger.error(f"Redis connection validation failed: {e}")
@@ -157,12 +190,39 @@ async def redis_connection() -> AsyncGenerator[Optional[Any], None]:
                 logger.warning(f"Error closing Redis connection: {e}")
 
 async def test_redis_connection() -> bool:
-    """Test that Redis connection is working."""
+    """Test that Redis connection is working and log detailed diagnostic information."""
     try:
+        logger.info(f"Testing Redis connection with backend: {'redis.asyncio' if USE_REDIS_ASYNCIO else 'aioredis'}")
+        logger.info(f"Redis URL: {os.environ.get('STORAGE_URL', REDIS_URL)}")
+        
+        # Check if redis module is available
+        if not redis or (not hasattr(redis, 'Redis') and not hasattr(redis, 'from_url')):
+            logger.error("Redis module is not properly initialized or imported")
+            return False
+        
+        # Try to create a connection
         async with redis_connection() as client:
-            return client is not None
+            if client is None:
+                logger.error("Could not establish Redis connection")
+                return False
+                
+            # Test connection with ping
+            result = await client.ping()
+            logger.info(f"Redis PING result: {result}")
+            
+            # Log Redis info for debugging
+            try:
+                info = await client.info()
+                logger.info(f"Redis version: {info.get('redis_version', 'unknown')}")
+                logger.info(f"Redis server mode: {info.get('redis_mode', 'unknown')}")
+                logger.info(f"Redis memory used: {info.get('used_memory_human', 'unknown')}")
+            except Exception as info_error:
+                logger.warning(f"Could not retrieve Redis info: {info_error}")
+            
+            return True
     except Exception as e:
-        logger.error(f"Redis connection test failed: {e}")
+        logger.error(f"Redis connection test failed with exception: {e}")
+        logger.exception("Full stack trace for Redis connection failure:")
         return False
 
 # Helper functions that maintain the same API regardless of underlying implementation
@@ -245,6 +305,72 @@ async def delete_with_fallback(key: str) -> bool:
     
     return redis_success
 
+async def get_redis_diagnostics() -> Dict[str, Any]:
+    """
+    Get detailed Redis diagnostic information.
+    Useful for health check endpoints.
+    
+    Returns:
+        Dict with diagnostic information including:
+        - status: "connected", "error", or "unavailable"
+        - error: Error message if applicable
+        - backend: "redis.asyncio" or "aioredis"
+        - version: Redis server version if available
+        - memory_used: Memory used by Redis server if available
+    """
+    result = {
+        "status": "unavailable",
+        "error": None,
+        "backend": "redis.asyncio" if USE_REDIS_ASYNCIO else "aioredis",
+        "url": os.environ.get("STORAGE_URL", REDIS_URL).replace(
+            # Mask credentials in URL for security
+            "://", "://***:***@", 1
+        ) if "://" in os.environ.get("STORAGE_URL", REDIS_URL) else os.environ.get("STORAGE_URL", REDIS_URL),
+        "version": None,
+        "memory_used": None,
+        "clients_connected": None,
+        "uptime_seconds": None
+    }
+    
+    try:
+        # Check if redis module is available
+        if not redis or (not hasattr(redis, 'Redis') and not hasattr(redis, 'from_url')):
+            result["status"] = "error"
+            result["error"] = "Redis module not properly initialized"
+            return result
+        
+        # Try to create a connection
+        async with redis_connection() as client:
+            if client is None:
+                result["status"] = "error"
+                result["error"] = "Could not establish Redis connection"
+                return result
+                
+            # Test connection with ping
+            ping_result = await client.ping()
+            if not ping_result:
+                result["status"] = "error"
+                result["error"] = "Redis ping failed"
+                return result
+                
+            # Connection is successful
+            result["status"] = "connected"
+            
+            # Get Redis info for additional diagnostics
+            try:
+                info = await client.info()
+                result["version"] = info.get("redis_version")
+                result["memory_used"] = info.get("used_memory_human")
+                result["clients_connected"] = info.get("connected_clients")
+                result["uptime_seconds"] = info.get("uptime_in_seconds")
+            except Exception as info_error:
+                result["error"] = f"Connected but could not retrieve info: {info_error}"
+    except Exception as e:
+        result["status"] = "error"
+        result["error"] = str(e)
+    
+    return result
+
 # These functions can be exported for direct use
 __all__ = [
     'redis_connection',
@@ -252,5 +378,6 @@ __all__ = [
     'get_with_fallback',
     'set_with_fallback',
     'delete_with_fallback',
-    'MessageJSONEncoder'
+    'MessageJSONEncoder',
+    'get_redis_diagnostics'
 ] 

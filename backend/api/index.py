@@ -981,13 +981,15 @@ async def health_check():
         
         # Check Redis connection
         try:
-            redis_status = await test_redis_connection()
-            results["services"]["redis"] = {
-                "status": "connected" if redis_status else "disconnected",
-                "url_configured": bool(os.environ.get("STORAGE_URL")),
-            }
+            # Use the new diagnostics function for detailed Redis information
+            from backend.services.redis_compat import get_redis_diagnostics
+            redis_diagnostics = await get_redis_diagnostics()
+            
+            # Provide detailed Redis information
+            results["services"]["redis"] = redis_diagnostics
         except Exception as e:
             logger.error(f"Redis health check failed: {e}")
+            logger.exception("Redis diagnostics error:")
             results["services"]["redis"] = {
                 "status": "error", 
                 "error": str(e),
