@@ -21,6 +21,83 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Redis connection configuration
+REDIS_URL = "redis://***:***@redis-10101.c135.eu-central-1-1.ec2.redns.redis-cloud.com:10101"
+_redis_pool = None
+_event_loop = None
+
+def get_event_loop():
+    """Get or create an event loop for Redis operations."""
+    global _event_loop
+    try:
+        _event_loop = asyncio.get_running_loop()
+    except RuntimeError:
+        _event_loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(_event_loop)
+    return _event_loop
+
+async def initialize_redis() -> None:
+    """Initialize the Redis connection pool with proper event loop handling."""
+    global _redis_pool
+    try:
+        if _redis_pool is None:
+            logger.info("Initializing Redis connection pool...")
+            loop = get_event_loop()
+            _redis_pool = await aioredis.create_redis_pool(
+                REDIS_URL,
+                minsize=1,
+                maxsize=10,
+                encoding='utf-8',
+                loop=loop
+            )
+            logger.info("Redis connection pool initialized successfully")
+    except Exception as e:
+        logger.error(f"Failed to initialize Redis connection pool: {e}")
+        raise
+
+async def get_redis() -> Optional[aioredis.Redis]:
+    """Get a Redis connection from the pool with proper error handling."""
+    try:
+        if _redis_pool is None:
+            await initialize_redis()
+        if _redis_pool is not None:
+            try:
+                await _redis_pool.ping()
+            except Exception:
+                logger.warning("Redis connection lost, reinitializing...")
+                await close_redis()
+                await initialize_redis()
+        return _redis_pool
+    except Exception as e:
+        logger.error(f"Error getting Redis connection: {e}")
+        return None
+
+async def close_redis() -> None:
+    """Close the Redis connection pool safely."""
+    global _redis_pool
+    if _redis_pool is not None:
+        try:
+            logger.info("Closing Redis connection pool...")
+            _redis_pool.close()
+            await _redis_pool.wait_closed()
+        except Exception as e:
+            logger.error(f"Error closing Redis connection pool: {e}")
+        finally:
+            _redis_pool = None
+            logger.info("Redis connection pool closed")
+
+async def test_redis_connection() -> bool:
+    """Test the Redis connection."""
+    try:
+        redis = await get_redis()
+        if redis is None:
+            return False
+        await redis.ping()
+        return True
+    except Exception as e:
+        logger.error(f"Redis connection test failed: {e}")
+        return False
+
 # Redis client instance
 _redis_client = None
 
@@ -76,9 +153,20 @@ class RedisManager:
         self._connection_backoff = 1  # Initial backoff in seconds
         self._max_backoff = 30  # Maximum backoff in seconds
         self._connection_lock = asyncio.Lock()
+        self._event_loop = None
+
+    def _get_event_loop(self):
+        """Get or create an event loop for Redis operations."""
+        if self._event_loop is None:
+            try:
+                self._event_loop = asyncio.get_running_loop()
+            except RuntimeError:
+                self._event_loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(self._event_loop)
+        return self._event_loop
 
     async def get_client(self) -> Optional[aioredis.Redis]:
-        """Get Redis client with connection management."""
+        """Get Redis client with improved connection management."""
         if self._client is not None:
             try:
                 await self._client.ping()
@@ -87,36 +175,32 @@ class RedisManager:
                 logger.warning(f"Redis connection test failed: {e}")
                 self._client = None
 
-        # Use lock to prevent multiple simultaneous connection attempts
         async with self._connection_lock:
-            # Check if we should attempt reconnection based on backoff
             now = datetime.now()
             if (now - self._last_connection_attempt).total_seconds() < self._connection_backoff:
                 return None
 
             try:
-                redis_url = os.environ.get("STORAGE_URL")
+                redis_url = os.environ.get("STORAGE_URL", REDIS_URL)
                 if not redis_url:
-                    logger.error("STORAGE_URL environment variable not set")
+                    logger.error("Redis URL not configured")
                     return None
 
-                # Mask credentials in URL for logging
                 masked_url = redis_url.replace(redis_url.split('@')[0] if '@' in redis_url else redis_url, '***:***@')
                 logger.info(f"Attempting Redis connection to {masked_url}")
 
+                loop = self._get_event_loop()
                 self._client = await aioredis.from_url(
                     redis_url,
                     encoding="utf-8",
                     decode_responses=True,
                     socket_timeout=10.0,
                     socket_connect_timeout=5.0,
-                    retry_on_timeout=True
+                    retry_on_timeout=True,
+                    loop=loop
                 )
 
-                # Test connection
                 await self._client.ping()
-                
-                # Reset backoff on successful connection
                 self._connection_backoff = 1
                 logger.info("Redis connection established successfully")
                 return self._client
@@ -124,11 +208,20 @@ class RedisManager:
             except Exception as e:
                 logger.error(f"Redis connection failed: {e}")
                 self._client = None
-                
-                # Implement exponential backoff
                 self._last_connection_attempt = now
                 self._connection_backoff = min(self._connection_backoff * 2, self._max_backoff)
                 return None
+
+    async def close(self):
+        """Close Redis connection safely."""
+        if self._client is not None:
+            try:
+                self._client.close()
+                await self._client.wait_closed()
+            except Exception as e:
+                logger.error(f"Error closing Redis connection: {e}")
+            finally:
+                self._client = None
 
     async def get(self, key: str) -> Optional[Any]:
         """Get value from Redis with fallback to memory cache."""
@@ -192,10 +285,6 @@ class RedisManager:
 _redis_manager = RedisManager()
 
 # Expose high-level functions
-async def get_redis() -> Optional[aioredis.Redis]:
-    """Get Redis client instance."""
-    return await _redis_manager.get_client()
-
 async def get_thread_state(thread_id: str) -> Optional[Dict[str, Any]]:
     """Get thread state with robust error handling."""
     key = f"{RedisKeyPrefix.THREAD_STATE}:{thread_id}"
