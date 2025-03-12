@@ -29,6 +29,25 @@ CONTEXT_PATTERNS = {
        r'(\d+)[\s-]year[s]?[\s-]old',
        r'(\d+)[\s-]year[s]?'
    ],
+   # Hebrew patterns for age extraction
+   "baby_age_hebrew": [
+       r'בת (\d+) חודשים',      # girl X months old
+       r'בת (\d+) שבועות',      # girl X weeks old
+       r'בת (\d+) ימים',        # girl X days old
+       r'בת (\d+) שנים',        # girl X years old
+       r'בן (\d+) חודשים',      # boy X months old  
+       r'בן (\d+) שבועות',      # boy X weeks old
+       r'בן (\d+) ימים',        # boy X days old
+       r'בן (\d+) שנים',        # boy X years old
+       r'בת חודשיים',           # girl 2 months old (special case)
+       r'בן חודשיים',           # boy 2 months old (special case)
+       r'בת שבועיים',           # girl 2 weeks old (special case)
+       r'בן שבועיים',           # boy 2 weeks old (special case)
+       r'גיל (\d+) חודשים',     # age X months
+       r'גיל (\d+) שבועות',     # age X weeks
+       r'גיל (\d+) ימים',       # age X days
+       r'גיל (\d+) שנים'        # age X years
+   ],
    "baby_name": [
        r"(?:my|our) (?:baby|son|daughter|child)(?:[']s)? name is (\w+)",
        r'(?:baby|son|daughter|child) (?:named|called) (\w+)',
@@ -165,8 +184,64 @@ async def extract_context(state: Dict[str, Any]) -> Dict[str, Any]:
        for msg in messages:
            if msg.type == "human":
                content = msg.content
+               
+               # Special case handling for Hebrew "חודשיים" (two months)
+               if language == "he" and "baby_age" not in extracted_entities:
+                   if "בת חודשיים" in content:
+                       context["baby_age"] = {
+                           "value": 2,
+                           "unit": "months",
+                           "confidence": 0.9
+                       }
+                       extracted_entities.add("baby_age")
+                       logger.info(f"Extracted baby age from Hebrew special case: 2 months")
+                       
+                   elif "בן חודשיים" in content:
+                       context["baby_age"] = {
+                           "value": 2,
+                           "unit": "months",
+                           "confidence": 0.9
+                       }
+                       extracted_entities.add("baby_age")
+                       logger.info(f"Extracted baby age from Hebrew special case: 2 months")
+               
+               # Extract baby age if not already extracted - handle Hebrew first if detected
+               if "baby_age" not in extracted_entities and language == "he":
+                   for pattern in CONTEXT_PATTERNS["baby_age_hebrew"]:
+                       age_match = re.search(pattern, content)
+                       if age_match:
+                           # Check if this is a special case (חודשיים/שבועיים)
+                           if "חודשיים" in pattern or "שבועיים" in pattern:
+                               value = 2  # These Hebrew words mean "two months"/"two weeks"
+                           else:
+                               # Regular number extraction
+                               try:
+                                   value = int(age_match.group(1))
+                               except (IndexError, ValueError):
+                                   value = None
+                                   
+                           if value is not None:
+                               if "חודשים" in pattern or "חודשיים" in pattern:
+                                   unit = "months"
+                               elif "שבועות" in pattern or "שבועיים" in pattern:
+                                   unit = "weeks"
+                               elif "ימים" in pattern:
+                                   unit = "days"
+                               elif "שנים" in pattern:
+                                   unit = "years"
+                               else:
+                                   unit = "months"  # Default
+                              
+                               context["baby_age"] = {
+                                   "value": value,
+                                   "unit": unit,
+                                   "confidence": 0.9
+                               }
+                               extracted_entities.add("baby_age")
+                               logger.info(f"Extracted baby age from Hebrew: {value} {unit}")
+                               break
               
-               # Extract baby age if not already extracted
+               # Extract baby age if not already extracted (English patterns)
                if "baby_age" not in extracted_entities:
                    for pattern in CONTEXT_PATTERNS["baby_age"]:
                        age_match = re.search(pattern, content, re.IGNORECASE)
@@ -224,6 +299,25 @@ async def extract_context(state: Dict[str, Any]) -> Dict[str, Any]:
                            extracted_entities.add("baby_gender")
                            logger.info(f"Extracted baby gender: {gender}")
                            break
+                           
+               # For Hebrew, also extract gender from the text patterns
+               if "baby_gender" not in extracted_entities and language == "he":
+                   if "בת " in content:
+                       gender = "female"
+                       context["baby_gender"] = {
+                           "value": gender,
+                           "confidence": 0.8
+                       }
+                       extracted_entities.add("baby_gender")
+                       logger.info(f"Extracted baby gender from Hebrew pattern: {gender}")
+                   elif "בן " in content:
+                       gender = "male"
+                       context["baby_gender"] = {
+                           "value": gender,
+                           "confidence": 0.8
+                       }
+                       extracted_entities.add("baby_gender")
+                       logger.info(f"Extracted baby gender from Hebrew pattern: {gender}")
               
                # Extract budget information if not already extracted or if mentioned again
                if "budget" not in extracted_entities or any(word in content.lower() for word in ['budget', 'cost', 'spend', '$', '₪', '€', '£']):

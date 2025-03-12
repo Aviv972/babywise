@@ -9,6 +9,7 @@ import re
 import json
 import logging
 import os
+import time
 from typing import Dict, Any, List, Optional, Set
 from langchain.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_openai import ChatOpenAI
@@ -56,133 +57,157 @@ def add_messages(messages, state):
     return state
 
 async def generate_response(state: Dict[str, Any]) -> Dict[str, Any]:
-    """Generate a response using the LLM."""
+    """
+    Generate a response to the user's message
+    
+    Args:
+        state: The current conversation state
+        
+    Returns:
+        The updated state
+    """
     try:
-        # Extract user messages
-        user_messages = [msg for msg in state.get("messages", []) if isinstance(msg, HumanMessage)]
-        if not user_messages:
-            logger.warning("No user messages found in state")
-            return state
+        start_time = time.time()
+        logger.info("Starting generate_response function")
         
-        last_user_message = user_messages[-1].content
-        logger.info(f"Last user message: '{last_user_message}'")
+        # Ensure chat history exists
+        messages = state.get("messages", [])
+        logger.info(f"Messages count: {len(messages)}")
         
-        # Get basic context
+        # Get domain from state
         domain = state.get("domain", "general")
-        language = state.get("language", state.get("metadata", {}).get("language", "en"))
+        language = state.get("language", "en")
+        
+        # Get context from state
         context = state.get("context", {})
-        logger.info(f"Domain: {domain}, Language: {language}")
+        user_context = state.get("user_context", {})
         
-        # Check if OpenAI API key is available
-        openai_api_key = os.environ.get("OPENAI_API_KEY", "")
-        # If key starts with ${, it's not properly set
-        if not openai_api_key or openai_api_key.startswith("${"):
-            logger.warning("OpenAI API key not found or invalid, using mock response")
-            return create_mock_response(state, domain, language)
-            
-        logger.info(f"OpenAI API key available: {bool(openai_api_key)}")
+        # Log the context information we have
+        logger.info(f"Generating response with domain: {domain}")
+        logger.info(f"Language: {language}")
+        logger.info(f"Context: {json.dumps(context, default=str)}")
+        logger.info(f"User context: {json.dumps(user_context, default=str)}")
         
-        try:
-            # Initialize the LLM
-            logger.info("Initializing ChatOpenAI with model: gpt-4o-mini")
-            llm = ChatOpenAI(
-                model="gpt-4o-mini",
-                temperature=0.4,
-                openai_api_key=openai_api_key
-            )
-            
-            # Get the domain-specific prompt
-            domain_prompt = DOMAIN_PROMPTS.get(domain, DOMAIN_PROMPTS["general"])
-            
-            # Get language-specific instructions
-            lang_instructions = LANGUAGE_INSTRUCTIONS.get(language, LANGUAGE_INSTRUCTIONS["en"])
-            
-            # Create the prompt template
-            logger.info("Creating prompt template")
-            # Escape the JSON curly braces in the context to avoid f-string variable interpolation issues
-            context_json = json.dumps(context, indent=2).replace("{", "{{").replace("}", "}}")
-            
-            system_prompt = f"""
-You are the Babywise Assistant, a specialized AI assistant for new and expecting parents.
-
-{domain_prompt}
-
-{lang_instructions}
-
-Current context:
-{context_json}
-            """
-            
-            prompt = ChatPromptTemplate.from_messages([
-                ("system", system_prompt),
-                MessagesPlaceholder(variable_name="chat_history"),
-            ])
-            
-            # Extract chat history
-            chat_history = []
-            for message in state["messages"]:
-                if isinstance(message, HumanMessage):
-                    chat_history.append(("human", message.content))
-                elif isinstance(message, AIMessage):
-                    chat_history.append(("ai", message.content))
-            
-            logger.info(f"Preparing to invoke LLM with {len(chat_history)} messages in history")
-            
-            # Prepare the formatted chat history outside the try block
-            formatted_chat_history = [{"role": role, "content": content} for role, content in chat_history]
-            logger.info(f"Formatted chat history with {len(formatted_chat_history)} messages")
-            
-            # Invoke the LLM
-            try:
-                logger.info("Invoking LLM")
-                # Test with a basic Hello World first to validate API call
-                test_result = await llm.ainvoke([{"role": "user", "content": "Say Hello World"}])
-                logger.info(f"Test LLM call successful: {test_result.content[:50]}...")
-                
-                # Create the actual payload
-                chain = prompt | llm
-                logger.info(f"Sending actual request to LLM with {len(formatted_chat_history)} messages")
-                
-                # Log a sample of the input to help with debugging
-                sample_input = {"chat_history": formatted_chat_history[:2]} if formatted_chat_history else {"chat_history": []}
-                logger.info(f"Sample of chain input: {json.dumps(sample_input, indent=2)[:200]}...")
-                
-                result = await chain.ainvoke({"chat_history": formatted_chat_history})
-                response = result.content
-                logger.info(f"LLM response received (first 100 chars): {response[:100]}")
-            except Exception as llm_error:
-                logger.error(f"Error during LLM invocation: {str(llm_error)}", exc_info=True)
-                # Try a fallback model
-                try:
-                    logger.info("Trying fallback model: gpt-3.5-turbo")
-                    fallback_llm = ChatOpenAI(
-                        model="gpt-3.5-turbo", 
-                        temperature=0.4,
-                        openai_api_key=openai_api_key
-                    )
-                    chain = prompt | fallback_llm
-                    # Use the formatted_chat_history from above
-                    result = await chain.ainvoke({"chat_history": formatted_chat_history})
-                    response = result.content
-                    logger.info(f"Fallback LLM response received (first 100 chars): {response[:100]}")
-                except Exception as fallback_error:
-                    logger.error(f"Error during fallback LLM invocation: {str(fallback_error)}", exc_info=True)
-                    logger.error("Both primary and fallback models failed, using mock response")
-                    return create_mock_response(state, domain, language)
-            
-            # Add the response to the messages
-            state["messages"].append(AIMessage(content=response))
-            return state
+        # Prepare conversation history for LLM
+        history = []
         
-        except Exception as e:
-            logger.error(f"Error in generate_response: {str(e)}", exc_info=True)
-            return create_mock_response(state, domain, language)
+        # Include up to 10 most recent messages
+        recent_messages = messages[-10:] if len(messages) > 10 else messages
+        
+        for msg in recent_messages:
+            if isinstance(msg, HumanMessage):
+                role = "user"
+            else:
+                role = "assistant"
+            history.append({"role": role, "content": msg.content})
+        
+        # Check for context references before generating response
+        latest_message = messages[-1].content.lower() if messages else ""
+        age_query = False
+        
+        # Detect if the user is asking about the baby's age in any language
+        age_queries_en = ["how old", "what age", "what is the age"]
+        age_queries_he = ["בת כמה", "בן כמה", "מה הגיל"]
+        
+        if language == "en" and any(q in latest_message.lower() for q in age_queries_en):
+            age_query = True
+        elif language == "he" and any(q in latest_message for q in age_queries_he):
+            age_query = True
             
+        # Add context-aware system message
+        system_message = {}
+        
+        # If the user is asking about age and we have that information, specifically include it
+        if age_query and ("baby_age" in context or "baby_age" in user_context):
+            if "baby_age" in context:
+                age_value = context["baby_age"]["value"]
+                age_unit = context["baby_age"]["unit"]
+            else:
+                age_value = user_context.get("baby_age")
+                age_unit = user_context.get("baby_age_unit", "months")
+                
+            if language == "en":
+                system_message = {
+                    "role": "system",
+                    "content": f"You are Babywise, a helpful assistant that provides information about baby care. The user's baby is {age_value} {age_unit} old. Make sure to reference this age when answering age-related questions."
+                }
+            else:  # Hebrew
+                system_message = {
+                    "role": "system",
+                    "content": f"אתה Babywise, עוזר מועיל שמספק מידע על טיפול בתינוקות. התינוק של המשתמש הוא בן/בת {age_value} {age_unit}. הקפד להתייחס לגיל זה בתשובות לשאלות הקשורות לגיל."
+                }
+        else:
+            # Create domain-specific system prompt
+            if domain == "sleep":
+                if language == "en":
+                    system_content = "You are Babywise, a helpful assistant specializing in baby sleep advice."
+                else:  # Hebrew
+                    system_content = "אתה Babywise, עוזר מועיל המתמחה בייעוץ שינה לתינוקות."
+            elif domain == "feeding":
+                if language == "en":
+                    system_content = "You are Babywise, a helpful assistant specializing in baby feeding advice."
+                else:  # Hebrew
+                    system_content = "אתה Babywise, עוזר מועיל המתמחה בייעוץ האכלה לתינוקות."
+            elif domain == "baby_gear":
+                if language == "en":
+                    system_content = "You are Babywise, a helpful assistant specializing in baby gear recommendations."
+                else:  # Hebrew
+                    system_content = "אתה Babywise, עוזר מועיל המתמחה בהמלצות לציוד תינוקות."
+            elif domain == "health":
+                if language == "en":
+                    system_content = "You are Babywise, a helpful assistant providing general information about baby health. You are not a doctor and do not provide medical advice."
+                else:  # Hebrew
+                    system_content = "אתה Babywise, עוזר מועיל המספק מידע כללי על בריאות תינוקות. אתה לא רופא ואינך מספק ייעוץ רפואי."
+            elif domain == "development":
+                if language == "en":
+                    system_content = "You are Babywise, a helpful assistant specializing in baby development milestones and activities."
+                else:  # Hebrew
+                    system_content = "אתה Babywise, עוזר מועיל המתמחה באבני דרך בהתפתחות תינוקות ופעילויות."
+            else:  # general domain
+                if language == "en":
+                    system_content = "You are Babywise, a helpful assistant that provides information about baby care."
+                else:  # Hebrew
+                    system_content = "אתה Babywise, עוזר מועיל המספק מידע על טיפול בתינוקות."
+            
+            # Add any context we have
+            if context and "baby_age" in context:
+                age_value = context["baby_age"]["value"]
+                age_unit = context["baby_age"]["unit"]
+                
+                if language == "en":
+                    system_content += f" The user's baby is {age_value} {age_unit} old."
+                else:  # Hebrew
+                    system_content += f" התינוק של המשתמש הוא בן/בת {age_value} {age_unit}."
+            
+            system_message = {
+                "role": "system",
+                "content": system_content
+            }
+        
+        # Build messages for the API call
+        messages_for_api = [system_message] + history
+        
+        # Generate response
+        response_content = await generate_llm_response(messages_for_api, language)
+        logger.info(f"LLM response received (first 100 chars): {response_content[:100]}")
+        
+        # Add to message history
+        state["messages"].append(AIMessage(content=response_content))
+        
+        # Track completion time
+        end_time = time.time()
+        duration = end_time - start_time
+        logger.info(f"Response generated in {duration:.2f} seconds")
+        
+        return state
     except Exception as e:
-        logger.error(f"Unexpected error in generate_response: {str(e)}", exc_info=True)
-        # Add a default response in case of error
-        mock_response = "I'm here to help with any baby care questions, including sleep, feeding, development, and more. How can I assist you today?"
-        state["messages"].append(AIMessage(content=mock_response))
+        logger.error(f"Error in generate_response: {str(e)}", exc_info=True)
+        # Return fallback response in case of error
+        if messages:
+            fail_message = "I apologize, but I encountered an error generating a response. Could you please try again?"
+            if state.get("language") == "he":
+                fail_message = "אני מתנצל, אך נתקלתי בשגיאה בעת יצירת תשובה. אנא נסה שוב."
+            state["messages"].append(AIMessage(content=fail_message))
         return state
 
 def create_mock_response(state: Dict[str, Any], domain: str, language: str) -> Dict[str, Any]:
@@ -313,3 +338,79 @@ def create_detailed_mock_response(domain, context, language="en"):
             "For more personalized advice, please share your baby's age and specific concerns or questions you have. "
             "I'm here to support you through your parenting journey with evidence-based information."
         ) 
+
+async def generate_llm_response(messages: List[Dict[str, str]], language: str = "en") -> str:
+    """
+    Generate a response using the OpenAI API
+    
+    Args:
+        messages: List of message dictionaries with role and content
+        language: Language code for the response
+        
+    Returns:
+        The generated response text
+    """
+    try:
+        # Check if OpenAI API key is available
+        openai_api_key = os.environ.get("OPENAI_API_KEY", "")
+        # If key starts with ${, it's not properly set
+        if not openai_api_key or openai_api_key.startswith("${"):
+            logger.warning("OpenAI API key not found or invalid, using mock response")
+            # Return a mock response based on language
+            if language == "he":
+                return "אני כאן לעזור לך בכל שאלה לגבי טיפול בתינוק, כולל שינה, האכלה, התפתחות ועוד. איך אוכל לעזור לך היום?"
+            else:
+                return "I'm here to help with any baby care questions, including sleep, feeding, development, and more. How can I assist you today?"
+        
+        logger.info(f"OpenAI API key available: {bool(openai_api_key)}")
+        
+        # Initialize the LLM
+        logger.info("Initializing ChatOpenAI with model: gpt-4o-mini")
+        llm = ChatOpenAI(
+            model="gpt-4o-mini",
+            temperature=0.4,
+            openai_api_key=openai_api_key
+        )
+        
+        # Log information about the request
+        logger.info(f"Sending request to OpenAI with {len(messages)} messages")
+        
+        # Make the API call
+        try:
+            result = await llm.ainvoke(messages)
+            response = result.content
+            logger.info(f"OpenAI response received (first 100 chars): {response[:100]}")
+            return response
+        except Exception as e:
+            logger.error(f"Error calling OpenAI API: {str(e)}")
+            logger.info("Trying fallback model: gpt-3.5-turbo")
+            
+            try:
+                # Try with fallback model
+                fallback_llm = ChatOpenAI(
+                    model="gpt-3.5-turbo", 
+                    temperature=0.4,
+                    openai_api_key=openai_api_key
+                )
+                
+                result = await fallback_llm.ainvoke(messages)
+                response = result.content
+                logger.info(f"Fallback model response received (first 100 chars): {response[:100]}")
+                return response
+            except Exception as fallback_error:
+                logger.error(f"Error with fallback model: {str(fallback_error)}")
+                
+                # Return a fallback response based on language
+                if language == "he":
+                    return "אני מתנצל, אך נתקלתי בבעיה בחיבור לשירות. האם תוכל לנסות את השאלה שלך שוב מאוחר יותר?"
+                else:
+                    return "I apologize, but I'm experiencing connection issues with my service. Could you try your question again later?"
+    
+    except Exception as e:
+        logger.error(f"Unexpected error in generate_llm_response: {str(e)}", exc_info=True)
+        
+        # Return a generic error response based on language
+        if language == "he":
+            return "אני מתנצל, אך נתקלתי בשגיאה בלתי צפויה. האם תוכל לנסח את השאלה שלך בצורה אחרת?"
+        else:
+            return "I apologize, but I encountered an unexpected error. Could you please rephrase your question?" 
