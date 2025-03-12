@@ -18,7 +18,9 @@ from backend.services.redis_service import (
     get_cached_recent_events,
     cache_active_routine,
     get_active_routine,
-    invalidate_routine_cache
+    invalidate_routine_cache,
+    get_redis,
+    RedisKeyPrefix
 )
 from backend.services.analytics_service import (
     update_daily_stats,
@@ -30,29 +32,65 @@ from backend.services.analytics_service import (
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Database file path
+# Check if we're in Vercel environment (read-only filesystem)
+IS_VERCEL = os.environ.get('VERCEL', '0') == '1' or os.path.exists('/.vercel')
+logger.info(f"Running in Vercel environment: {IS_VERCEL}")
+
+# Database file path for local development
 DB_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "routine_tracker.db")
 
-# Ensure data directory exists
-os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
+# Ensure data directory exists if we're not in Vercel
+if not IS_VERCEL:
+    try:
+        os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
+    except Exception as e:
+        logger.warning(f"Could not create data directory: {e}. Switching to Redis-only mode.")
+        IS_VERCEL = True
 
 def check_db_connection() -> bool:
     """Check if database connection is working"""
+    if IS_VERCEL:
+        # In Vercel, we'll use Redis so return True if Redis is working
+        try:
+            import asyncio
+            result = asyncio.run(test_redis_connection())
+            return result
+        except Exception as e:
+            logger.error(f"Redis connection check failed: {str(e)}")
+            return False
+    else:
+        # In local development, use SQLite
+        try:
+            conn = sqlite3.connect(DB_PATH)
+            cursor = conn.cursor()
+            cursor.execute("SELECT 1")
+            result = cursor.fetchone()
+            return result is not None and result[0] == 1
+        except Exception as e:
+            logger.error(f"Database connection check failed: {str(e)}")
+            return False
+        finally:
+            if 'conn' in locals():
+                conn.close()
+
+async def test_redis_connection() -> bool:
+    """Test Redis connection"""
     try:
-        conn = sqlite3.connect(DB_PATH)
-        cursor = conn.cursor()
-        cursor.execute("SELECT 1")
-        result = cursor.fetchone()
-        return result is not None and result[0] == 1
+        redis = await get_redis()
+        if redis is None:
+            return False
+        await redis.ping()
+        return True
     except Exception as e:
-        logger.error(f"Database connection check failed: {str(e)}")
+        logger.error(f"Redis connection test failed: {e}")
         return False
-    finally:
-        if 'conn' in locals():
-            conn.close()
 
 def init_db():
     """Initialize the database with the required tables"""
+    if IS_VERCEL:
+        logger.info("Using Redis for storage in Vercel environment. No database initialization needed.")
+        return True
+
     try:
         conn = sqlite3.connect(DB_PATH)
         cursor = conn.cursor()
@@ -87,13 +125,13 @@ def init_db():
         logger.error(f"Error initializing database: {str(e)}", exc_info=True)
         return False
     finally:
-        if conn:
+        if 'conn' in locals():
             conn.close()
 
 async def add_event(thread_id: str, event_type: str, start_time: datetime, 
                    end_time: Optional[datetime] = None, notes: Optional[str] = None) -> int:
     """
-    Add a new routine event to the database
+    Add a new routine event to the database or Redis
     
     Args:
         thread_id: Unique identifier for the conversation thread
@@ -105,113 +143,97 @@ async def add_event(thread_id: str, event_type: str, start_time: datetime,
     Returns:
         ID of the newly created event
     """
-    conn = None
-    try:
-        logger.info(f"Adding {event_type} event for thread {thread_id}")
-        logger.info(f"Start time: {start_time}, End time: {end_time}, Notes: {notes}")
-        
-        conn = sqlite3.connect(DB_PATH)
-        cursor = conn.cursor()
-        
-        # Normalize datetime objects to remove timezone info for consistent storage
-        def normalize_datetime(dt):
-            if dt is None:
-                return None
-            # If datetime has timezone info, convert to UTC and remove timezone
-            if dt.tzinfo is not None:
-                from datetime import timezone
-                dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
-            return dt
-        
-        # Normalize datetimes
-        start_time_normalized = normalize_datetime(start_time)
-        end_time_normalized = normalize_datetime(end_time)
-        
-        # Ensure start_time and end_time are in ISO format
-        start_time_iso = start_time_normalized.isoformat()
-        end_time_iso = end_time_normalized.isoformat() if end_time_normalized else None
-        
-        # Insert the event
-        logger.info(f"Executing SQL INSERT with values: ({thread_id}, {event_type}, {start_time_iso}, {end_time_iso}, {notes})")
-        cursor.execute('''
-        INSERT INTO routine_events (thread_id, event_type, start_time, end_time, notes)
-        VALUES (?, ?, ?, ?, ?)
-        ''', (thread_id, event_type, start_time_iso, end_time_iso, notes))
-        
-        # Get the ID of the newly inserted event
-        event_id = cursor.lastrowid
-        
-        conn.commit()
-        logger.info(f"Added {event_type} event for thread {thread_id}: ID={event_id}, start={start_time_iso}, end={end_time_iso}")
-        
-        # Invalidate cache for this routine type
-        await invalidate_routine_cache(thread_id, event_type)
-        
-        # Update analytics
-        if end_time_normalized:
-            duration = end_time_normalized - start_time_normalized
-            duration_hours = duration.total_seconds() / 3600
-            
-            # Update daily stats
-            daily_stats = {
-                "total_events": 1,
-                "total_duration_hours": duration_hours,
-                "average_duration": duration_hours
+    # Normalize datetime objects to remove timezone info for consistent storage
+    def normalize_datetime(dt):
+        if dt is None:
+            return None
+        # If datetime has timezone info, convert to UTC and remove timezone
+        if dt.tzinfo is not None:
+            from datetime import timezone
+            dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
+        return dt
+    
+    # Normalize datetimes
+    start_time_normalized = normalize_datetime(start_time)
+    end_time_normalized = normalize_datetime(end_time)
+    
+    # Ensure start_time and end_time are in ISO format
+    start_time_iso = start_time_normalized.isoformat()
+    end_time_iso = end_time_normalized.isoformat() if end_time_normalized else None
+    
+    logger.info(f"Adding {event_type} event for thread {thread_id}")
+    logger.info(f"Start time: {start_time_iso}, End time: {end_time_iso}, Notes: {notes}")
+    
+    if IS_VERCEL:
+        # Use Redis in Vercel environment
+        try:
+            redis = await get_redis()
+            if redis is None:
+                logger.error("Failed to get Redis connection")
+                raise Exception("Redis connection failed")
+                
+            # Create event object
+            import uuid
+            event_id = str(uuid.uuid4())
+            event = {
+                "id": event_id,
+                "thread_id": thread_id,
+                "event_type": event_type,
+                "start_time": start_time_iso,
+                "end_time": end_time_iso,
+                "notes": notes,
+                "created_at": datetime.utcnow().isoformat()
             }
-            await update_daily_stats(thread_id, event_type, daily_stats)
             
-            # Update weekly stats
-            weekly_stats = {
-                "total_events": 1,
-                "total_duration_hours": duration_hours,
-                "average_duration": duration_hours,
-                "days_tracked": 1
-            }
-            await update_weekly_stats(thread_id, event_type, weekly_stats)
+            # Generate key for the event
+            event_key = f"{RedisKeyPrefix.EVENT}:{thread_id}:{event_type}:{event_id}"
             
-            # Update pattern stats based on time of day
-            hour = start_time_normalized.hour
-            duration_type = "long" if duration_hours >= 2 else "short"
+            # Store event in Redis
+            await redis.set(event_key, json.dumps(event))
             
-            # Determine time range based on hour and notes
-            if "nap" in notes.lower():
-                if "morning" in notes.lower():
-                    time_range = "morning"
-                elif "afternoon" in notes.lower():
-                    time_range = "afternoon"
-                else:
-                    time_range = "night"
-            else:
-                time_range = "night"
+            # Add to thread's event list
+            thread_events_key = f"{RedisKeyPrefix.THREAD_EVENTS}:{thread_id}"
+            await redis.rpush(thread_events_key, event_key)
             
-            # Update pattern stats
-            pattern_stats = {
-                "time_ranges": {
-                    "morning": 0,
-                    "afternoon": 0,
-                    "night": 0
-                },
-                "durations": {
-                    "short": 0,
-                    "long": 0
-                }
-            }
-            pattern_stats["time_ranges"][time_range] = 1
-            pattern_stats["durations"][duration_type] = 1
+            logger.info(f"Added {event_type} event to Redis for thread {thread_id}: ID={event_id}")
             
-            # Log the pattern stats for debugging
-            logger.info(f"Hour: {hour}, Notes: {notes}, Time range: {time_range}, Duration type: {duration_type}")
-            logger.info(f"Pattern stats: {pattern_stats}")
+            # Invalidate cache
+            await invalidate_routine_cache(thread_id, event_type)
             
-            await update_pattern_stats(thread_id, event_type, pattern_stats)
-        
-        return event_id
-    except Exception as e:
-        logger.error(f"Error adding event: {str(e)}", exc_info=True)
-        raise
-    finally:
-        if conn:
-            conn.close()
+            return event_id
+        except Exception as e:
+            logger.error(f"Error adding event to Redis: {str(e)}", exc_info=True)
+            raise
+    else:
+        # Use SQLite in local development
+        conn = None
+        try:
+            conn = sqlite3.connect(DB_PATH)
+            cursor = conn.cursor()
+            
+            # Insert the event
+            logger.info(f"Executing SQL INSERT with values: ({thread_id}, {event_type}, {start_time_iso}, {end_time_iso}, {notes})")
+            cursor.execute('''
+            INSERT INTO routine_events (thread_id, event_type, start_time, end_time, notes)
+            VALUES (?, ?, ?, ?, ?)
+            ''', (thread_id, event_type, start_time_iso, end_time_iso, notes))
+            
+            # Get the ID of the newly inserted event
+            event_id = cursor.lastrowid
+            
+            conn.commit()
+            logger.info(f"Added {event_type} event for thread {thread_id}: ID={event_id}, start={start_time_iso}, end={end_time_iso}")
+            
+            # Invalidate cache for this routine type
+            await invalidate_routine_cache(thread_id, event_type)
+            
+            return event_id
+        except Exception as e:
+            logger.error(f"Error adding event to SQLite: {str(e)}", exc_info=True)
+            raise
+        finally:
+            if conn:
+                conn.close()
 
 async def update_event(event_id: int, end_time: Optional[datetime] = None, 
                       notes: Optional[str] = None) -> bool:
@@ -385,7 +407,7 @@ async def get_events_by_date_range(thread_id: str, start_date: datetime,
             query += ' AND event_type = ?'
             params.append(event_type)
             
-            query += ' ORDER BY start_time ASC'
+        query += ' ORDER BY start_time ASC'
         
         logger.info(f"Retrieving events for thread {thread_id} from {start_date_iso} to {end_date_iso}")
         logger.info(f"Executing query: {query} with params: {params}")

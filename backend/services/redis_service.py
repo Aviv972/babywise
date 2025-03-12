@@ -37,18 +37,16 @@ def get_event_loop():
     return _event_loop
 
 async def initialize_redis() -> None:
-    """Initialize the Redis connection pool with proper event loop handling."""
+    """Initialize the Redis connection pool with proper error handling."""
     global _redis_pool
     try:
         if _redis_pool is None:
             logger.info("Initializing Redis connection pool...")
-            loop = get_event_loop()
             _redis_pool = await aioredis.create_redis_pool(
                 REDIS_URL,
                 minsize=1,
                 maxsize=10,
-                encoding='utf-8',
-                loop=loop
+                encoding='utf-8'
             )
             logger.info("Redis connection pool initialized successfully")
     except Exception as e:
@@ -196,8 +194,7 @@ class RedisManager:
                     decode_responses=True,
                     socket_timeout=10.0,
                     socket_connect_timeout=5.0,
-                    retry_on_timeout=True,
-                    loop=loop
+                    retry_on_timeout=True
                 )
 
                 await self._client.ping()
