@@ -58,22 +58,29 @@ HELP_PATTERNS = [
 
 # Command patterns - Hebrew
 SLEEP_START_PATTERNS_HE = [
-    r'(?:תינוק|ילד|התינוק|הילד)?\s*(?:הלך ל|נמצא ב|הלך לישון ב|ישן ב)?(?:שינה|מיטה|תנומה)(?:ישן)?\s+(?:ב-?\s*)?(\d{1,2}(?::\d{2})?\s*(?:am|pm|a\.m\.|p\.m\.)?|\d{1,2}(?::\d{2})?)',
-    r'(?:שם|שמתי)(?:ה)?\s+(?:תינוק|ילד|אותו|אותה|את התינוק)?\s+(?:ל|ב)\s+(?:שינה|מיטה|תנומה)\s+(?:ב-?\s*)?(\d{1,2}(?::\d{2})?\s*(?:am|pm|a\.m\.|p\.m\.)?|\d{1,2}(?::\d{2})?)',
-    r'(?:תינוק|ילד|התינוק|הילד)?\s*(?:התחיל)\s+(?:לישון|לנמנם)\s+(?:ב-?\s*)?(\d{1,2}(?::\d{2})?\s*(?:am|pm|a\.m\.|p\.m\.)?|\d{1,2}(?::\d{2})?)',
-    r'(?:התינוק|הילד)?\s*(?:נרדם|ישן|הלך לישון)\s+(?:ב-?\s*)?(\d{1,2}(?::\d{2})?\s*(?:am|pm|a\.m\.|p\.m\.)?|\d{1,2}(?::\d{2})?)',
+    r'(?:תינוק|תינוקת|ילד|ילדה|התינוק|התינוקת|הילד|הילדה)?\s*(?:הלך ל|הלכה ל|נמצא ב|נמצאת ב|הלך לישון ב|הלכה לישון ב|ישן ב|ישנה ב)?(?:שינה|מיטה|תנומה)(?:ישן|ישנה)?\s+(?:ב-?\s*)?(\d{1,2}(?::\d{2})?\s*(?:am|pm|a\.m\.|p\.m\.)?|\d{1,2}(?::\d{2})?)',
+    r'(?:שם|שמתי)(?:ה)?\s+(?:תינוק|תינוקת|ילד|ילדה|אותו|אותה|את התינוק|את התינוקת)?\s+(?:ל|ב)\s+(?:שינה|מיטה|תנומה)\s+(?:ב-?\s*)?(\d{1,2}(?::\d{2})?\s*(?:am|pm|a\.m\.|p\.m\.)?|\d{1,2}(?::\d{2})?)',
+    r'(?:תינוק|תינוקת|ילד|ילדה|התינוק|התינוקת|הילד|הילדה)?\s*(?:התחיל|התחילה)\s+(?:לישון|לנמנם)\s+(?:ב-?\s*)?(\d{1,2}(?::\d{2})?\s*(?:am|pm|a\.m\.|p\.m\.)?|\d{1,2}(?::\d{2})?)',
+    r'(?:התינוק|התינוקת|הילד|הילדה)?\s*(?:נרדם|נרדמה|ישן|ישנה|הלך לישון|הלכה לישון)\s+(?:ב-?\s*)?(\d{1,2}(?::\d{2})?\s*(?:am|pm|a\.m\.|p\.m\.)?|\d{1,2}(?::\d{2})?)',
     # Simpler patterns
     r'(?:שינה|לישון)\s+(?:ב-?\s*)?(\d{1,2}(?::\d{2})?\s*(?:am|pm|a\.m\.|p\.m\.)?|\d{1,2}(?::\d{2})?)',
-    r'(?:התינוק|הילד)?\s*(?:הלך לישון)\s+(?:ב-?\s*)?(\d{1,2}(?::\d{2})?\s*(?:am|pm|a\.m\.|p\.m\.)?|\d{1,2}(?::\d{2})?)'
+    r'(?:התינוק|התינוקת|הילד|הילדה)?\s*(?:הלך לישון|הלכה לישון)\s+(?:ב-?\s*)?(\d{1,2}(?::\d{2})?\s*(?:am|pm|a\.m\.|p\.m\.)?|\d{1,2}(?::\d{2})?)',
+    # Specific patterns for "נרדמה ב13" format
+    r'(?:נרדם|נרדמה)\s+(?:ב-?\s*)?(\d{1,2}(?::\d{2})?\s*(?:am|pm|a\.m\.|p\.m\.)?|\d{1,2}(?::\d{2})?)',
+    r'(?:תינוק|תינוקת|התינוק|התינוקת)\s+(?:נרדם|נרדמה)\s+(?:ב-?\s*)?(\d{1,2}(?::\d{2})?\s*(?:am|pm|a\.m\.|p\.m\.)?|\d{1,2}(?::\d{2})?)',
+    # More flexible pattern to catch with or without the "ב" prefix
+    r'(?:תינוק|תינוקת|ילד|ילדה|התינוק|התינוקת|הילד|הילדה)?\s*(?:נרדם|נרדמה)\s+(?:ב)?(\d{1,2})(?:\:(\d{2}))?'
 ]
 
 SLEEP_END_PATTERNS_HE = [
-    r'(?:תינוק|ילד|התינוק|הילד)?\s*(?:התעורר|ער|קם)\s+(?:ב-?\s*)?(\d{1,2}(?::\d{2})?\s*(?:am|pm|a\.m\.|p\.m\.)?|\d{1,2}(?::\d{2})?)',
-    r'(?:תינוק|ילד|התינוק|הילד)?\s*(?:הוא|היא)?\s*(?:ער|ערה)\s+(?:מ-?\s*)?(\d{1,2}(?::\d{2})?\s*(?:am|pm|a\.m\.|p\.m\.)?|\d{1,2}(?::\d{2})?)',
-    r'(?:תינוק|ילד|התינוק|הילד)?\s*(?:הפסיק|סיים)\s+(?:לישון|לנמנם)\s+(?:ב-?\s*)?(\d{1,2}(?::\d{2})?\s*(?:am|pm|a\.m\.|p\.m\.)?|\d{1,2}(?::\d{2})?)',
+    r'(?:תינוק|תינוקת|ילד|ילדה|התינוק|התינוקת|הילד|הילדה)?\s*(?:התעורר|התעוררה|ער|ערה|קם|קמה)\s+(?:ב-?\s*)?(\d{1,2}(?::\d{2})?\s*(?:am|pm|a\.m\.|p\.m\.)?|\d{1,2}(?::\d{2})?)',
+    r'(?:תינוק|תינוקת|ילד|ילדה|התינוק|התינוקת|הילד|הילדה)?\s*(?:הוא|היא)?\s*(?:ער|ערה)\s+(?:מ-?\s*)?(\d{1,2}(?::\d{2})?\s*(?:am|pm|a\.m\.|p\.m\.)?|\d{1,2}(?::\d{2})?)',
+    r'(?:תינוק|תינוקת|ילד|ילדה|התינוק|התינוקת|הילד|הילדה)?\s*(?:הפסיק|הפסיקה|סיים|סיימה)\s+(?:לישון|לנמנם)\s+(?:ב-?\s*)?(\d{1,2}(?::\d{2})?\s*(?:am|pm|a\.m\.|p\.m\.)?|\d{1,2}(?::\d{2})?)',
     # Simpler patterns
     r'(?:התעורר|התעוררה)\s+(?:ב-?\s*)?(\d{1,2}(?::\d{2})?\s*(?:am|pm|a\.m\.|p\.m\.)?|\d{1,2}(?::\d{2})?)',
-    r'(?:תינוק|ילד|התינוק|הילד)?\s*(?:קם|קמה)\s+(?:ב-?\s*)?(\d{1,2}(?::\d{2})?\s*(?:am|pm|a\.m\.|p\.m\.)?|\d{1,2}(?::\d{2})?)'
+    r'(?:תינוק|תינוקת|ילד|ילדה|התינוק|התינוקת|הילד|הילדה)?\s*(?:קם|קמה)\s+(?:ב-?\s*)?(\d{1,2}(?::\d{2})?\s*(?:am|pm|a\.m\.|p\.m\.)?|\d{1,2}(?::\d{2})?)',
+    # More flexible pattern to catch with or without the "ב" prefix
+    r'(?:תינוק|תינוקת|ילד|ילדה|התינוק|התינוקת|הילד|הילדה)?\s*(?:התעורר|התעוררה)\s+(?:ב)?(\d{1,2})(?:\:(\d{2}))?'
 ]
 
 FEED_START_PATTERNS_HE = [
@@ -114,6 +121,8 @@ def parse_time(time_str: str) -> Optional[datetime]:
         Datetime object or None if parsing fails
     """
     try:
+        logger.info(f"Parsing time from string: '{time_str}'")
+        
         # Clean up the time string
         time_str = time_str.strip().lower()
         
@@ -125,21 +134,46 @@ def parse_time(time_str: str) -> Optional[datetime]:
         elif 'am' in time_str or 'a.m.' in time_str:
             time_str = time_str.replace('am', '').replace('a.m.', '').strip()
         
+        # Handle Hebrew time indicators
+        if 'בבוקר' in time_str:
+            time_str = time_str.replace('בבוקר', '').strip()
+        elif 'בערב' in time_str or 'בלילה' in time_str:
+            is_pm = True
+            time_str = time_str.replace('בערב', '').replace('בלילה', '').strip()
+        elif 'בצהריים' in time_str:
+            is_pm = True
+            time_str = time_str.replace('בצהריים', '').strip()
+        
         # Parse hours and minutes
         if ':' in time_str:
             hours, minutes = map(int, time_str.split(':'))
         else:
-            hours = int(time_str)
-            minutes = 0
+            # Just a simple number like "13"
+            try:
+                hours = int(time_str)
+                minutes = 0
+                logger.info(f"Parsed simple hour format: hours={hours}, minutes={minutes}")
+            except ValueError:
+                logger.warning(f"Could not parse '{time_str}' as a simple hour")
+                return None
         
         # Adjust for PM if needed
         if is_pm and hours < 12:
             hours += 12
+            logger.info(f"Adjusted for PM: hours={hours}")
+        
+        # If hours is greater than 12, assume 24-hour format
+        if hours > 12 and hours <= 23:
+            logger.info(f"Assuming 24-hour format for hour {hours}")
+        elif hours > 23:
+            logger.warning(f"Invalid hour value: {hours}")
+            return None
         
         # Create datetime object for today with the specified time
         now = datetime.now()
         result = now.replace(hour=hours, minute=minutes, second=0, microsecond=0)
         
+        logger.info(f"Successfully parsed time: {result.strftime('%Y-%m-%d %H:%M')}")
         return result
     except Exception as e:
         logger.error(f"Error parsing time '{time_str}': {str(e)}")
