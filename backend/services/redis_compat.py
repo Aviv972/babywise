@@ -57,21 +57,20 @@ except ImportError as e:
     class ResponseError(RedisError): pass
     class DataError(RedisError): pass
     
-    # Create a mock Redis module to prevent "redis is not defined" errors
-    class RedisMock:
-        """Mock Redis class to prevent errors when Redis imports fail."""
-        @staticmethod
-        async def from_url(*args, **kwargs):
-            logger.error("Using RedisMock - Redis functionality will not work")
-            return None
-        
-    # Create a Redis class with a Redis.from_url static method
+    # Create a mock Redis class with proper structure
     class Redis:
+        """Mock Redis class to prevent errors when Redis imports fail."""
         @staticmethod
         async def from_url(*args, **kwargs):
             logger.error("Using Redis mock - Redis functionality will not work")
             return None
     
+    # Create a mock redis module that has Redis as an attribute
+    class RedisMock:
+        """Mock redis module to mimic the structure of imported redis modules."""
+        def __init__(self):
+            self.Redis = Redis
+
     # Create the redis variable that would normally be imported
     redis = RedisMock()
 
