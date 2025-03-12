@@ -884,11 +884,11 @@ async def direct_get_latest_event(thread_id: str, event_type: str):
         })
 
 # Direct implementation of get_routine_summary
-async def _get_summary(thread_id: str, period: str = "day") -> Dict[str, Any]:
+async def _get_summary(thread_id: str, period: str = "day", force_refresh: bool = False) -> Dict[str, Any]:
     """
     Enhanced implementation of the get summary endpoint with isolated Redis operations.
     """
-    logger.info(f"Getting summary for thread: {thread_id}, period: {period}")
+    logger.info(f"Getting summary for thread: {thread_id}, period: {period}, force_refresh: {force_refresh}")
     
     try:
         # Calculate time range based on period
@@ -935,7 +935,7 @@ async def _get_summary(thread_id: str, period: str = "day") -> Dict[str, Any]:
         try:
             import backend.db.routine_db as routine_db
             
-            summary = await routine_db.get_summary(thread_id, period)
+            summary = await routine_db.get_summary(thread_id, period, force_refresh)
             
             if summary:
                 logger.info(f"Generated summary for thread {thread_id}")
@@ -965,14 +965,14 @@ async def _get_summary(thread_id: str, period: str = "day") -> Dict[str, Any]:
         }
 
 @app.get("/api/routines/summary/{thread_id}")
-async def direct_get_summary(thread_id: str, period: str = "day"):
+async def direct_get_summary(thread_id: str, period: str = "day", force_refresh: bool = False):
     """
     Direct implementation of the get summary endpoint to bypass import issues.
     """
-    logger.info(f"Direct get summary endpoint called for thread: {thread_id}, period: {period}")
+    logger.info(f"Direct get summary endpoint called for thread: {thread_id}, period: {period}, force_refresh: {force_refresh}")
     
     try:
-        summary = await _get_summary(thread_id, period)
+        summary = await _get_summary(thread_id, period, force_refresh)
         
         return JSONResponse({
             "summary": summary,
