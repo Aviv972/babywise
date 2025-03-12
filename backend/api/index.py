@@ -25,7 +25,8 @@ logger.info("=== API STARTUP ===")
 logger.info(f"Python version: {sys.version}")
 logger.info(f"Current directory: {os.getcwd()}")
 logger.info(f"File location: {__file__}")
-logger.info(f"Event loop: {asyncio.get_running_loop()}")
+# Don't access event loop during module initialization
+# logger.info(f"Event loop: {asyncio.get_running_loop()}")
 
 # Import aioredis patch before any other imports
 try:
@@ -132,39 +133,56 @@ async def redis_connection() -> AsyncGenerator[Optional[aioredis.Redis], None]:
     """
     client = None
     try:
-        # Get Redis URL from environment or use default
-        redis_url = os.environ.get("STORAGE_URL", REDIS_URL)
-        if not redis_url:
-            logger.error("Redis URL not configured")
-            yield None
-            return
-            
-        # Connect to Redis with modern from_url method
-        client = await aioredis.from_url(
-            redis_url,
-            encoding="utf-8",
-            decode_responses=True,
-            socket_timeout=3.0,  # Even shorter timeout for serverless environment
-            socket_connect_timeout=2.0,
-            retry_on_timeout=True
-        )
-        
+        # Ensure we have an event loop - in serverless environments, this might
+        # not be available during module initialization, but should be during request handling
         try:
-            # Validate connection with ping
-            await client.ping()
-            # Connection is valid, yield it to the caller
-            yield client
+            # Get the current event loop or create a new one if none exists
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                # No running event loop, create a new one if none exists
+                # This should only happen during testing or unusual scenarios
+                logger.warning("No running event loop found, creating a new one")
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                
+            # Get Redis URL from environment or use default
+            redis_url = os.environ.get("STORAGE_URL", REDIS_URL)
+            if not redis_url:
+                logger.error("Redis URL not configured")
+                yield None
+                return
+                
+            # Connect to Redis with modern from_url method
+            client = await aioredis.from_url(
+                redis_url,
+                encoding="utf-8",
+                decode_responses=True,
+                socket_timeout=3.0,  # Short timeout for serverless
+                socket_connect_timeout=2.0,
+                retry_on_timeout=True
+            )
+            
+            try:
+                # Validate connection with ping
+                await client.ping()
+                # Connection is valid, yield it to the caller
+                yield client
+            except Exception as e:
+                # Connection failed validation
+                logger.error(f"Redis connection validation failed: {e}")
+                if client:
+                    try:
+                        client.close()
+                        await client.wait_closed()
+                    except Exception as ex:
+                        logger.warning(f"Error closing invalid Redis connection: {ex}")
+                    client = None
+                yield None
         except Exception as e:
-            # Connection failed validation
-            logger.error(f"Redis connection validation failed: {e}")
-            if client:
-                try:
-                    client.close()
-                    await client.wait_closed()
-                except Exception as ex:
-                    logger.warning(f"Error closing invalid Redis connection: {ex}")
-                client = None
+            logger.error(f"Event loop error: {e}")
             yield None
+            
     except Exception as e:
         # Connection creation failed
         logger.error(f"Error creating Redis connection: {e}")
@@ -190,53 +208,97 @@ async def test_redis_connection() -> bool:
 
 # Thread state functions
 async def get_thread_state(thread_id: str) -> Optional[Dict[str, Any]]:
-    """Get the state for a thread."""
+    """Get the state for a thread with improved error handling."""
+    if not thread_id:
+        logger.warning("get_thread_state called with empty thread_id")
+        return None
+        
     key = f"thread_state:{thread_id}"
     
+    # Try Redis first with better error handling
     try:
         async with redis_connection() as client:
             if client:
-                value = await client.get(key)
-                if value:
-                    try:
-                        return json.loads(value)
-                    except json.JSONDecodeError:
-                        return None
+                try:
+                    value = await client.get(key)
+                    if value:
+                        try:
+                            return json.loads(value)
+                        except json.JSONDecodeError as e:
+                            logger.error(f"Error decoding JSON for {key}: {e}")
+                            return None
+                except Exception as inner_e:
+                    logger.warning(f"Redis operation error for {key}: {inner_e}")
+            else:
+                logger.warning(f"Redis client not available for {key}")
     except Exception as e:
-        logger.warning(f"Error getting {key} from Redis: {e}")
+        logger.warning(f"Redis connection error for {key}: {e}")
     
     # Fall back to memory cache
-    if key in _memory_cache:
-        logger.info(f"Using memory cache fallback for {key}")
-        return _memory_cache.get(key)
+    try:
+        if key in _memory_cache:
+            logger.info(f"Using memory cache fallback for {key}")
+            return _memory_cache.get(key)
+    except Exception as cache_e:
+        logger.error(f"Memory cache error for {key}: {cache_e}")
     
     return None
 
 async def save_thread_state(thread_id: str, state: Dict[str, Any]) -> bool:
-    """Save the state for a thread."""
+    """Save the state for a thread with improved error handling."""
+    if not thread_id:
+        logger.warning("save_thread_state called with empty thread_id")
+        return False
+        
+    if not state:
+        logger.warning(f"save_thread_state called with empty state for thread {thread_id}")
+        return False
+        
     key = f"thread_state:{thread_id}"
     
-    # Convert value to JSON
+    # Convert value to JSON with better error handling
     try:
-        value = json.dumps(state)
+        value = json.dumps(state, default=str)  # Use default=str to handle non-serializable objects
     except Exception as e:
         logger.error(f"Error serializing state for {key}: {e}")
-        return False
+        
+        # Try with a simpler approach - just keep essential data
+        try:
+            # Extract just the essential data
+            simplified_state = {
+                "thread_id": thread_id,
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "context": state.get("context", {})
+            }
+            value = json.dumps(simplified_state)
+            logger.info(f"Created simplified state for {thread_id}")
+        except Exception as e2:
+            logger.error(f"Error creating simplified state for {key}: {e2}")
+            return False
     
-    # Try Redis first
+    # Try Redis first with better error handling
     redis_success = False
     try:
         async with redis_connection() as client:
             if client:
-                await client.set(key, value, ex=86400)  # 24 hour expiration
-                redis_success = True
-                logger.info(f"Successfully saved thread state to Redis: {thread_id}")
+                try:
+                    await client.set(key, value, ex=86400)  # 24 hour expiration
+                    redis_success = True
+                    logger.info(f"Successfully saved thread state to Redis: {thread_id}")
+                except Exception as inner_e:
+                    logger.warning(f"Redis operation error for {key}: {inner_e}")
+            else:
+                logger.warning(f"Redis client not available for {key}")
     except Exception as e:
-        logger.warning(f"Error setting {key} in Redis: {e}")
+        logger.warning(f"Redis connection error for {key}: {e}")
     
     # Always update memory cache (regardless of Redis success)
     try:
-        _memory_cache[key] = state
+        try:
+            _memory_cache[key] = json.loads(value)
+        except json.JSONDecodeError:
+            _memory_cache[key] = value
+            
         logger.info(f"Stored {key} in memory cache fallback")
         return True
     except Exception as e:
@@ -890,6 +952,7 @@ async def direct_get_summary(thread_id: str, period: str = "day"):
             "error": str(e)
         })
 
+# Health check with safe event loop access
 @app.get("/api/health")
 async def health_check():
     """
@@ -899,6 +962,10 @@ async def health_check():
     logger.info("Health check endpoint called")
     
     try:
+        # Now we can safely access the event loop inside an async function
+        event_loop = asyncio.get_running_loop()
+        logger.info(f"Health check running in event loop: {event_loop}")
+        
         # Test results
         results = {
             "status": "ok",
@@ -907,7 +974,7 @@ async def health_check():
             "environment": {
                 "vercel": os.environ.get('VERCEL', '0') == '1' or os.path.exists('/.vercel'),
                 "python_version": f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}",
-                "event_loop": str(asyncio.get_running_loop()),
+                "event_loop": str(event_loop),
                 "serverless": os.environ.get('AWS_LAMBDA_FUNCTION_NAME') is not None or os.environ.get('VERCEL', '0') == '1'
             }
         }
@@ -992,6 +1059,7 @@ async def health_check():
             "duration_seconds": process_time
         }, status_code=500)
 
+# Diagnostics with safe event loop access
 @app.get("/api/diagnostics")
 async def diagnostics():
     """
@@ -1001,6 +1069,10 @@ async def diagnostics():
     logger.info("Diagnostics endpoint called")
     
     try:
+        # Safely access event loop inside async function
+        event_loop = asyncio.get_running_loop()
+        logger.info(f"Diagnostics running in event loop: {event_loop}")
+        
         # Basic environment info
         env_info = {
             "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -1010,7 +1082,7 @@ async def diagnostics():
                                         for k, v in os.environ.items()},
             "current_directory": os.getcwd(),
             "file_location": __file__,
-            "event_loop": str(asyncio.get_running_loop()),
+            "event_loop": str(event_loop),
             "vercel": os.environ.get('VERCEL', '0') == '1' or os.path.exists('/.vercel'),
             "serverless": os.environ.get('AWS_LAMBDA_FUNCTION_NAME') is not None or os.environ.get('VERCEL', '0') == '1'
         }
