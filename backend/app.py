@@ -91,27 +91,51 @@ app.mount("/", StaticFiles(directory=str(FRONTEND_DIR), html=True), name="fronte
 @app.on_event("startup")
 async def startup_event():
     """Initialize services on startup"""
-    from backend.services.redis_service import initialize_redis
-    from backend.db.routine_tracker import init_db
-    
-    # Initialize Redis
-    redis_client = await initialize_redis()
-    if not redis_client:
+    # Import Redis service
+    try:
+        from backend.services.redis_service import initialize_redis, test_redis_connection
+        
+        # Initialize Redis
+        await initialize_redis()
+        
+        # Test Redis connection
+        redis_ok = await test_redis_connection()
+        if not redis_ok:
+            logger.warning("Redis connection test failed - some features may not work properly")
+        else:
+            logger.info("Redis initialized successfully")
+    except Exception as e:
+        logger.error(f"Redis initialization error: {e}")
         logger.warning("Redis initialization failed - some features may not work properly")
-    else:
-        logger.info("Redis initialized successfully")
     
     # Initialize database
-    db_success = init_db()
-    if not db_success:
-        logger.warning("Database initialization failed - some features may not work properly")
-    else:
-        logger.info("Database initialized successfully")
+    try:
+        from backend.db.routine_tracker import init_db, check_db_connection
+        
+        # Initialize database
+        db_success = init_db()
+        if not db_success:
+            logger.warning("Database initialization failed - some features may not work properly")
+        else:
+            logger.info("Database initialized successfully")
+            
+        # Test database connection
+        if check_db_connection():
+            logger.info("Database connection verified")
+        else:
+            logger.warning("Database connection check failed - routine tracking may not work properly")
+    except Exception as e:
+        logger.error(f"Database initialization error: {e}")
+        logger.warning("Database initialization failed - routine tracking may not work properly")
         
     # Initialize workflow
-    from backend.workflow.workflow import get_workflow
-    workflow = await get_workflow()
-    if workflow:
-        logger.info("Workflow initialized successfully")
-    else:
+    try:
+        from backend.workflow.workflow import get_workflow
+        workflow = await get_workflow()
+        if workflow:
+            logger.info("Workflow initialized successfully")
+        else:
+            logger.warning("Workflow initialization failed - chat features may not work properly")
+    except Exception as e:
+        logger.error(f"Workflow initialization error: {e}")
         logger.warning("Workflow initialization failed - chat features may not work properly") 
