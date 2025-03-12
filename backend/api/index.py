@@ -965,9 +965,10 @@ async def _get_summary(thread_id: str, period: str = "day", force_refresh: bool 
         }
 
 @app.get("/api/routines/summary/{thread_id}")
-async def direct_get_summary(thread_id: str, period: str = "day", force_refresh: bool = False):
+async def direct_get_summary(thread_id: str, period: str = "day", force_refresh: bool = True):
     """
     Direct implementation of the get summary endpoint to bypass import issues.
+    Always forces a refresh by default to ensure we get the latest data.
     """
     logger.info(f"Direct get summary endpoint called for thread: {thread_id}, period: {period}, force_refresh: {force_refresh}")
     
