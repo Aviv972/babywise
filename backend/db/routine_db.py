@@ -153,39 +153,27 @@ async def get_events(
                 logger.info(f"No events found for thread {thread_id}")
                 return []
             
-            # Use pipeline for efficient batch retrieval
-            pipe = client.pipeline()
-            for key in event_keys:
-                pipe.get(key)
+            # Debug the event keys
+            logger.info(f"Found {len(event_keys)} event keys for thread {thread_id}")
+            for i, key in enumerate(event_keys):
+                logger.info(f"Event key {i+1}: {key}")
             
-            results = await pipe.execute()
-            
-            # Process and filter events
-            for i, event_json in enumerate(results):
-                if not event_json:
-                    continue
-                
+            # Retrieve the actual event data for each key
+            events = []
+            for event_key in event_keys:
                 try:
-                    # First we need to check if our event_json is already an object or a JSON string
-                    if isinstance(event_json, str):
-                        try:
-                            event = json.loads(event_json)
-                        except json.JSONDecodeError:
-                            # If the event_json is just a key (not the actual content), we need to fetch the actual data
-                            logger.warning(f"Event key retrieval issue - got a key instead of data: {event_json}")
-                            actual_event_data = await client.get(event_json)
-                            if actual_event_data:
-                                try:
-                                    event = json.loads(actual_event_data)
-                                except json.JSONDecodeError:
-                                    logger.warning(f"Error decoding JSON from key: {event_json}")
-                                    continue
-                            else:
-                                logger.warning(f"No data found for event key: {event_json}")
-                                continue
-                    else:
-                        # If it's already an object (deserialized JSON), use it directly
-                        event = event_json
+                    # Get the event data from Redis
+                    event_data = await client.get(event_key)
+                    if not event_data:
+                        logger.warning(f"No event data found for key: {event_key}")
+                        continue
+                    
+                    # Parse the event data
+                    try:
+                        event = json.loads(event_data)
+                    except json.JSONDecodeError:
+                        logger.warning(f"Error decoding JSON for event key {event_key}")
+                        continue
                     
                     # Apply type filter if specified
                     if event_type and event.get("event_type") != event_type:
@@ -279,12 +267,8 @@ async def get_events(
                     except (ValueError, TypeError) as e:
                         logger.warning(f"Error parsing event time '{event.get('event_time')}': {e}")
                         continue
-                        
-                except json.JSONDecodeError:
-                    logger.warning(f"Error decoding JSON for event key {event_keys[i]}")
-                    continue
                 except Exception as e:
-                    logger.warning(f"Error processing event key {event_keys[i]}: {e}")
+                    logger.warning(f"Error processing event key {event_key}: {e}")
                     continue
         
         # Sort events by time
