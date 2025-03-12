@@ -99,20 +99,44 @@ async def get_events(
     if start_date:
         if isinstance(start_date, str):
             try:
+                # Parse the string to a timezone-aware datetime
                 start_dt = datetime.fromisoformat(start_date.replace("Z", "+00:00"))
+                # Convert to naive datetime in UTC for consistent comparison
+                start_dt = start_dt.replace(tzinfo=None)
+                logger.info(f"Converted start_date string to naive datetime: {start_dt}")
             except ValueError:
                 logger.warning(f"Invalid start date format: {start_date}")
         else:
-            start_dt = start_date
+            # If it's already a datetime, ensure it's timezone-naive
+            if start_date.tzinfo is not None:
+                # Convert to UTC then remove timezone
+                from datetime import timezone
+                start_dt = start_date.astimezone(timezone.utc).replace(tzinfo=None)
+                logger.info(f"Converted timezone-aware start_date to naive: {start_dt}")
+            else:
+                start_dt = start_date
+                logger.info(f"Using naive start_date as is: {start_dt}")
     
     if end_date:
         if isinstance(end_date, str):
             try:
+                # Parse the string to a timezone-aware datetime
                 end_dt = datetime.fromisoformat(end_date.replace("Z", "+00:00"))
+                # Convert to naive datetime in UTC for consistent comparison
+                end_dt = end_dt.replace(tzinfo=None)
+                logger.info(f"Converted end_date string to naive datetime: {end_dt}")
             except ValueError:
                 logger.warning(f"Invalid end date format: {end_date}")
         else:
-            end_dt = end_date
+            # If it's already a datetime, ensure it's timezone-naive
+            if end_date.tzinfo is not None:
+                # Convert to UTC then remove timezone
+                from datetime import timezone
+                end_dt = end_date.astimezone(timezone.utc).replace(tzinfo=None)
+                logger.info(f"Converted timezone-aware end_date to naive: {end_dt}")
+            else:
+                end_dt = end_date
+                logger.info(f"Using naive end_date as is: {end_dt}")
     
     events = []
     try:
@@ -157,8 +181,15 @@ async def get_events(
                         
                         # Handle potential None values or format issues
                         try:
-                            # First try direct parsing of ISO format
-                            event_dt = datetime.fromisoformat(event_time_str.replace("Z", "+00:00"))
+                            # First try direct parsing of ISO format with timezone handling
+                            event_time_str = event_time_str.replace("Z", "+00:00")
+                            # Parse to timezone-aware datetime, then convert to naive in UTC for comparison
+                            event_dt = datetime.fromisoformat(event_time_str)
+                            # If it has timezone info, convert to UTC and remove timezone
+                            if event_dt.tzinfo is not None:
+                                from datetime import timezone
+                                event_dt = event_dt.astimezone(timezone.utc).replace(tzinfo=None)
+                                logger.info(f"Converted event time to UTC naive datetime: {event_dt}")
                         except (AttributeError, ValueError) as e:
                             # If that fails, try to handle common format issues
                             logger.warning(f"Failed to parse event time '{event_time_str}': {e}")
@@ -175,6 +206,8 @@ async def get_events(
                                     event_dt = datetime.strptime(event_time_str, "%Y-%m-%dT%H:%M:%S.%f")
                                 else:
                                     event_dt = datetime.strptime(event_time_str, "%Y-%m-%d %H:%M:%S.%f")
+                                # These are already naive datetimes, no need to modify
+                                logger.info(f"Parsed event time with fallback method: {event_dt}")
                             except (ValueError, TypeError):
                                 # Last resort - skip this event
                                 logger.error(f"Could not parse event time '{event_time_str}' with any format, skipping event")
