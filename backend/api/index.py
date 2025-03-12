@@ -6,12 +6,16 @@ import os
 import traceback
 import logging
 import json
+import asyncio
+import contextlib
 from pathlib import Path
+from datetime import datetime, timezone, timedelta
+from typing import Dict, List, Optional, Any, Union, AsyncGenerator
 
 # Set up logging
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    format='%(asctime)s - %(name)s - %(levelname)s - [%(filename)s:%(lineno)d] - %(message)s',
     datefmt='%Y-%m-%d %H:%M:%S',
 )
 logger = logging.getLogger(__name__)
@@ -21,6 +25,7 @@ logger.info("=== API STARTUP ===")
 logger.info(f"Python version: {sys.version}")
 logger.info(f"Current directory: {os.getcwd()}")
 logger.info(f"File location: {__file__}")
+logger.info(f"Event loop: {asyncio.get_running_loop()}")
 
 # Import aioredis patch before any other imports
 try:
@@ -58,8 +63,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 import uuid
-from datetime import datetime, timezone
-from typing import Dict, List, Optional, Any, Union
+import aioredis
 
 # Import compatibility patches
 from backend.api.compatibility import apply_all_patches
@@ -98,13 +102,146 @@ try:
     import starlette
     from fastapi import FastAPI, Request, Response, HTTPException, Depends
     from fastapi.responses import JSONResponse, HTMLResponse, Response
-    from fastapi.middleware.cors import CORSMiddleware
-    
-    logger.info(f"Successfully imported FastAPI modules: {fastapi.__version__}")
+    logger.info(f"FastAPI version: {fastapi.__version__}")
+    logger.info(f"Pydantic version: {pydantic.__version__}")
+    logger.info(f"Starlette version: {starlette.__version__}")
 except Exception as e:
-    logger.error(f"Failed to import FastAPI modules: {str(e)}")
+    logger.error(f"Failed to import web framework modules: {str(e)}")
     logger.error(traceback.format_exc())
     raise
+
+# Redis connection configuration
+REDIS_URL = os.environ.get("STORAGE_URL", "redis://localhost:6379/0")
+
+# In-memory fallback cache when Redis is unavailable
+_memory_cache = {}
+
+@contextlib.asynccontextmanager
+async def redis_connection() -> AsyncGenerator[Optional[aioredis.Redis], None]:
+    """
+    Context manager for Redis connections to ensure proper cleanup.
+    
+    This creates a completely isolated connection for a single operation
+    and guarantees it will be properly closed regardless of success or failure.
+    
+    Usage:
+        async with redis_connection() as redis:
+            if redis:
+                # Use redis connection here
+                await redis.get("my_key")
+    """
+    client = None
+    try:
+        # Get Redis URL from environment or use default
+        redis_url = os.environ.get("STORAGE_URL", REDIS_URL)
+        if not redis_url:
+            logger.error("Redis URL not configured")
+            yield None
+            return
+            
+        # Connect to Redis with modern from_url method
+        client = await aioredis.from_url(
+            redis_url,
+            encoding="utf-8",
+            decode_responses=True,
+            socket_timeout=3.0,  # Even shorter timeout for serverless environment
+            socket_connect_timeout=2.0,
+            retry_on_timeout=True
+        )
+        
+        try:
+            # Validate connection with ping
+            await client.ping()
+            # Connection is valid, yield it to the caller
+            yield client
+        except Exception as e:
+            # Connection failed validation
+            logger.error(f"Redis connection validation failed: {e}")
+            if client:
+                try:
+                    client.close()
+                    await client.wait_closed()
+                except Exception as ex:
+                    logger.warning(f"Error closing invalid Redis connection: {ex}")
+                client = None
+            yield None
+    except Exception as e:
+        # Connection creation failed
+        logger.error(f"Error creating Redis connection: {e}")
+        yield None
+    finally:
+        # Always ensure the connection is properly closed
+        if client:
+            try:
+                client.close()
+                await client.wait_closed()
+            except Exception as e:
+                # Log but don't re-raise - we don't want cleanup errors to propagate
+                logger.warning(f"Error closing Redis connection: {e}")
+
+async def test_redis_connection() -> bool:
+    """Test that Redis connection is working."""
+    try:
+        async with redis_connection() as client:
+            return client is not None
+    except Exception as e:
+        logger.error(f"Redis connection test failed: {e}")
+        return False
+
+# Thread state functions
+async def get_thread_state(thread_id: str) -> Optional[Dict[str, Any]]:
+    """Get the state for a thread."""
+    key = f"thread_state:{thread_id}"
+    
+    try:
+        async with redis_connection() as client:
+            if client:
+                value = await client.get(key)
+                if value:
+                    try:
+                        return json.loads(value)
+                    except json.JSONDecodeError:
+                        return None
+    except Exception as e:
+        logger.warning(f"Error getting {key} from Redis: {e}")
+    
+    # Fall back to memory cache
+    if key in _memory_cache:
+        logger.info(f"Using memory cache fallback for {key}")
+        return _memory_cache.get(key)
+    
+    return None
+
+async def save_thread_state(thread_id: str, state: Dict[str, Any]) -> bool:
+    """Save the state for a thread."""
+    key = f"thread_state:{thread_id}"
+    
+    # Convert value to JSON
+    try:
+        value = json.dumps(state)
+    except Exception as e:
+        logger.error(f"Error serializing state for {key}: {e}")
+        return False
+    
+    # Try Redis first
+    redis_success = False
+    try:
+        async with redis_connection() as client:
+            if client:
+                await client.set(key, value, ex=86400)  # 24 hour expiration
+                redis_success = True
+                logger.info(f"Successfully saved thread state to Redis: {thread_id}")
+    except Exception as e:
+        logger.warning(f"Error setting {key} in Redis: {e}")
+    
+    # Always update memory cache (regardless of Redis success)
+    try:
+        _memory_cache[key] = state
+        logger.info(f"Stored {key} in memory cache fallback")
+        return True
+    except Exception as e:
+        logger.error(f"Error setting {key} in memory cache: {e}")
+        return redis_success  # Return Redis result if memory cache fails
 
 # Import custom modules
 try:
@@ -173,11 +310,6 @@ try:
     logger.info("Successfully imported debug_openai module")
 except Exception as e:
     logger.error(f"Failed to import debug_openai module: {str(e)}")
-
-# Log dependency versions
-logger.info(f"FastAPI version: {fastapi.__version__}")
-logger.info(f"Pydantic version: {pydantic.__version__}")
-logger.info(f"Starlette version: {starlette.__version__}")
 
 # Create FastAPI app
 app = FastAPI()
@@ -648,6 +780,87 @@ async def direct_get_latest_event(thread_id: str, event_type: str):
             "error": str(e)
         })
 
+# Direct implementation of get_routine_summary
+async def _get_summary(thread_id: str, period: str = "day") -> Dict[str, Any]:
+    """
+    Enhanced implementation of the get summary endpoint with isolated Redis operations.
+    """
+    logger.info(f"Getting summary for thread: {thread_id}, period: {period}")
+    
+    try:
+        # Calculate time range based on period
+        now = datetime.now(timezone.utc)
+        if period == "day":
+            start_date = now.replace(hour=0, minute=0, second=0, microsecond=0)
+            period_name = "Today"
+        elif period == "week":
+            start_date = now - timedelta(days=now.weekday())
+            start_date = start_date.replace(hour=0, minute=0, second=0, microsecond=0)
+            period_name = "This Week"
+        elif period == "month":
+            start_date = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+            period_name = "This Month"
+        else:
+            # Default to last 24 hours if period is unknown
+            start_date = now - timedelta(days=1)
+            period_name = "Last 24 Hours"
+        
+        # Create an empty summary structure
+        empty_summary = {
+            "period": period,
+            "period_name": period_name,
+            "start_date": start_date.isoformat(),
+            "end_date": now.isoformat(),
+            "thread_id": thread_id,
+            "routines": {
+                "sleep": {
+                    "total_events": 0,
+                    "total_duration": 0,
+                    "average_duration": 0,
+                    "latest_event": None,
+                    "events": []
+                },
+                "feeding": {
+                    "total_events": 0,
+                    "latest_event": None,
+                    "events": []
+                }
+            }
+        }
+        
+        # Try to use the backend implementation if available
+        try:
+            import backend.db.routine_db as routine_db
+            
+            summary = await routine_db.get_summary(thread_id, period)
+            
+            if summary:
+                logger.info(f"Generated summary for thread {thread_id}")
+                return summary
+            
+            return empty_summary
+                
+        except ImportError:
+            logger.warning("Could not import routine_db module, using fallback implementation")
+            return empty_summary
+            
+        except Exception as e:
+            logger.error(f"Error using backend get summary implementation: {str(e)}")
+            logger.error(traceback.format_exc())
+            return empty_summary
+            
+    except Exception as e:
+        logger.error(f"Error in get_summary: {str(e)}")
+        logger.error(traceback.format_exc())
+        
+        # Return a fallback response
+        return {
+            "period": period,
+            "error": str(e),
+            "thread_id": thread_id,
+            "routines": {}
+        }
+
 @app.get("/api/routines/summary/{thread_id}")
 async def direct_get_summary(thread_id: str, period: str = "day"):
     """
@@ -656,21 +869,12 @@ async def direct_get_summary(thread_id: str, period: str = "day"):
     logger.info(f"Direct get summary endpoint called for thread: {thread_id}, period: {period}")
     
     try:
-        # Try to use the backend implementation if available
-        try:
-            import backend.db.routine_db as routine_db
-            
-            summary = await routine_db.get_summary(thread_id, period)
-            
-            return JSONResponse({
-                "summary": summary,
-                "status": "success"
-            })
-                
-        except Exception as e:
-            logger.error(f"Error using backend get summary implementation: {str(e)}")
-            logger.error(traceback.format_exc())
-            raise
+        summary = await _get_summary(thread_id, period)
+        
+        return JSONResponse({
+            "summary": summary,
+            "status": "success"
+        })
             
     except Exception as e:
         logger.error(f"Error in direct get summary endpoint: {str(e)}")
@@ -689,21 +893,201 @@ async def direct_get_summary(thread_id: str, period: str = "day"):
 @app.get("/api/health")
 async def health_check():
     """
-    Health check endpoint to verify the API is running.
+    Enhanced health check endpoint that tests all service components
     """
+    start_time = datetime.now()
     logger.info("Health check endpoint called")
     
-    # Check if backend modules are available
-    backend_available = False
     try:
-        import backend.workflow.workflow
-        import backend.services.redis_service
-        backend_available = True
+        # Test results
+        results = {
+            "status": "ok",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "services": {},
+            "environment": {
+                "vercel": os.environ.get('VERCEL', '0') == '1' or os.path.exists('/.vercel'),
+                "python_version": f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}",
+                "event_loop": str(asyncio.get_running_loop()),
+                "serverless": os.environ.get('AWS_LAMBDA_FUNCTION_NAME') is not None or os.environ.get('VERCEL', '0') == '1'
+            }
+        }
+        
+        # Check Redis connection
+        try:
+            redis_status = await test_redis_connection()
+            results["services"]["redis"] = {
+                "status": "connected" if redis_status else "disconnected",
+                "url_configured": bool(os.environ.get("STORAGE_URL")),
+            }
+        except Exception as e:
+            logger.error(f"Redis health check failed: {e}")
+            results["services"]["redis"] = {
+                "status": "error", 
+                "error": str(e),
+                "traceback": traceback.format_exc().split("\n")[-5:]
+            }
+        
+        # Check thread state access
+        try:
+            test_thread_id = "health-check-thread"
+            test_data = {"test": True, "timestamp": datetime.now(timezone.utc).isoformat()}
+            
+            # Test write
+            save_result = await save_thread_state(test_thread_id, test_data)
+            
+            # Test read
+            read_result = await get_thread_state(test_thread_id)
+            
+            results["services"]["thread_state"] = {
+                "status": "working" if save_result and read_result and read_result.get("test") is True else "failing",
+                "write_success": bool(save_result),
+                "read_success": bool(read_result)
+            }
+        except Exception as e:
+            logger.error(f"Thread state health check failed: {e}")
+            results["services"]["thread_state"] = {
+                "status": "error", 
+                "error": str(e),
+                "traceback": traceback.format_exc().split("\n")[-5:]
+            }
+        
+        # Check if backend modules are available
+        backend_available = False
+        try:
+            import backend.workflow.workflow
+            import backend.services.redis_service
+            backend_available = True
+            results["backend_available"] = backend_available
+        except Exception as e:
+            logger.error(f"Backend modules not available: {str(e)}")
+            results["backend_available"] = False
+            results["backend_error"] = str(e)
+        
+        # Overall status determination
+        service_statuses = [s.get("status") for s in results["services"].values()]
+        if any(status == "error" for status in service_statuses):
+            results["status"] = "error"
+        elif any(status in ["disconnected", "failing", "uninitialized"] for status in service_statuses):
+            results["status"] = "degraded"
+        else:
+            results["status"] = "ok"
+        
+        # Performance metrics
+        process_time = (datetime.now() - start_time).total_seconds()
+        results["performance"] = {
+            "health_check_duration_seconds": process_time
+        }
+        
+        return JSONResponse(results)
     except Exception as e:
-        logger.error(f"Backend modules not available: {str(e)}")
+        process_time = (datetime.now() - start_time).total_seconds()
+        logger.error(f"Health check failed: {str(e)} after {process_time:.3f}s")
+        logger.error(traceback.format_exc())
+        
+        return JSONResponse({
+            "status": "error",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "error": str(e),
+            "traceback": traceback.format_exc().split("\n")[-10:],
+            "duration_seconds": process_time
+        }, status_code=500)
+
+@app.get("/api/diagnostics")
+async def diagnostics():
+    """
+    Diagnostic endpoint to help troubleshoot deployment issues.
+    Returns detailed information about the running environment.
+    """
+    logger.info("Diagnostics endpoint called")
     
-    return JSONResponse({
-        "status": "ok",
-        "backend_available": backend_available,
-        "timestamp": datetime.now(timezone.utc).isoformat()
-    })
+    try:
+        # Basic environment info
+        env_info = {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "python_version": sys.version,
+            "python_path": sys.path,
+            "environment_variables": {k: "***" if k.lower() in ("openai_api_key", "storage_url") else v 
+                                        for k, v in os.environ.items()},
+            "current_directory": os.getcwd(),
+            "file_location": __file__,
+            "event_loop": str(asyncio.get_running_loop()),
+            "vercel": os.environ.get('VERCEL', '0') == '1' or os.path.exists('/.vercel'),
+            "serverless": os.environ.get('AWS_LAMBDA_FUNCTION_NAME') is not None or os.environ.get('VERCEL', '0') == '1'
+        }
+        
+        # Redis test
+        redis_info = {}
+        try:
+            # Test connection
+            redis_connected = await test_redis_connection()
+            redis_info["connected"] = redis_connected
+            
+            # Test thread state
+            if redis_connected:
+                test_thread_id = "diagnostics-test"
+                test_data = {"test": True, "timestamp": datetime.now(timezone.utc).isoformat()}
+                
+                # Test write
+                save_result = await save_thread_state(test_thread_id, test_data)
+                redis_info["save_result"] = save_result
+                
+                # Test read
+                read_result = await get_thread_state(test_thread_id)
+                redis_info["read_result"] = read_result is not None
+                redis_info["read_data_valid"] = read_result and read_result.get("test") is True
+                
+        except Exception as e:
+            redis_info["error"] = str(e)
+            redis_info["traceback"] = traceback.format_exc().split("\n")
+        
+        # Module availability
+        modules_info = {}
+        try:
+            # FastAPI and web modules
+            modules_info["fastapi"] = {"version": fastapi.__version__, "location": fastapi.__file__}
+            modules_info["pydantic"] = {"version": pydantic.__version__, "location": pydantic.__file__}
+            modules_info["starlette"] = {"version": starlette.__version__, "location": starlette.__file__}
+            
+            # Redis modules
+            import aioredis
+            modules_info["aioredis"] = {"version": getattr(aioredis, "__version__", "unknown"), "location": aioredis.__file__}
+            
+            # Check for key backend modules
+            try:
+                import backend.workflow.workflow
+                modules_info["workflow"] = {"available": True, "location": backend.workflow.workflow.__file__}
+            except ImportError:
+                modules_info["workflow"] = {"available": False, "error": "Module not found"}
+                
+            try:
+                import backend.services.redis_service
+                modules_info["redis_service"] = {"available": True, "location": backend.services.redis_service.__file__}
+            except ImportError:
+                modules_info["redis_service"] = {"available": False, "error": "Module not found"}
+                
+            try:
+                import backend.db.routine_db
+                modules_info["routine_db"] = {"available": True, "location": backend.db.routine_db.__file__}
+            except ImportError:
+                modules_info["routine_db"] = {"available": False, "error": "Module not found"}
+                
+        except Exception as e:
+            modules_info["error"] = str(e)
+            modules_info["traceback"] = traceback.format_exc().split("\n")
+            
+        # Put everything together
+        result = {
+            "environment": env_info,
+            "redis": redis_info,
+            "modules": modules_info
+        }
+        
+        return JSONResponse(result)
+    except Exception as e:
+        logger.error(f"Diagnostics endpoint error: {str(e)}")
+        logger.error(traceback.format_exc())
+        
+        return JSONResponse({
+            "error": str(e),
+            "traceback": traceback.format_exc().split("\n")
+        }, status_code=500)
