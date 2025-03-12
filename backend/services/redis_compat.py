@@ -172,6 +172,11 @@ redis = None
 redis_backend = "none"
 import_error = None
 
+# First, ensure we always have a fallback as a last resort
+# This guarantees redis is always defined
+redis = RedisImportFallback()
+redis_backend = "fallback_initial"
+
 try:
     if USE_REDIS_ASYNCIO:
         # Try modern approach with redis.asyncio
@@ -191,10 +196,10 @@ try:
         except ImportError as e:
             import_error = f"Failed to import redis.asyncio: {e}"
             logger.warning(import_error)
-            redis = None
+            # Keep using the fallback that's already set
     
     # If redis.asyncio import failed or we're configured to use aioredis, try aioredis
-    if redis is None:
+    if redis_backend == "fallback_initial":
         try:
             import aioredis as redis_client
             from aioredis.exceptions import (
@@ -210,25 +215,19 @@ try:
         except ImportError as e:
             import_error = f"Failed to import aioredis: {e}"
             logger.warning(import_error)
-            redis = None
+            # Keep using the fallback that's already set
     
-    # If all imports failed, use our fallback
-    if redis is None:
-        logger.error(f"No Redis module could be imported: {import_error}")
-        redis = RedisImportFallback()
-        redis_backend = "fallback"
+    # No need to set fallback again - it's already set by default
 except Exception as e:
     import_error = f"Unexpected error during Redis imports: {e}"
     logger.error(import_error)
     logger.error(traceback.format_exc())
-    redis = RedisImportFallback()
-    redis_backend = "fallback"
+    # Keep using the fallback that's already set
 
-# Ensure redis is always defined to prevent "name 'redis' is not defined" errors
-if redis is None:
-    logger.error("Redis module still None after imports, creating fallback")
-    redis = RedisImportFallback()
-    redis_backend = "fallback_final"
+# Log the final state of the Redis client
+logger.info(f"Final Redis backend: {redis_backend}")
+if redis_backend.startswith("fallback"):
+    logger.warning("Using fallback Redis implementation - limited functionality")
 
 # Get Redis connection details for logging
 redis_url_masked = REDIS_URL

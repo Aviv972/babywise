@@ -25,6 +25,20 @@ async def add_event(
 ) -> Dict[str, Any]:
     """Add a routine event to the database."""
     try:
+        # Validate inputs
+        if not thread_id:
+            logger.error("Cannot add event with empty thread_id")
+            raise ValueError("thread_id is required")
+            
+        if not event_type:
+            logger.error("Cannot add event with empty event_type")
+            raise ValueError("event_type is required")
+            
+        # Handle None or empty event_time
+        if not event_time:
+            logger.warning(f"Event time is empty or None, using current UTC time")
+            event_time = datetime.utcnow().isoformat()
+        
         # Create event object
         event = {
             "thread_id": thread_id,
@@ -35,8 +49,9 @@ async def add_event(
             "created_at": datetime.utcnow().isoformat()
         }
         
-        # Generate event ID and key
-        event_id = f"{event_time.replace(':', '-').replace('.', '-')}-{local_id or event_type}"
+        # Generate event ID and key - ensure strings and handle special chars safely
+        safe_event_time = str(event_time).replace(':', '-').replace('.', '-').replace(' ', 'T')
+        event_id = f"{safe_event_time}-{local_id or event_type}"
         event_key = f"{RedisKeyPrefix.EVENT}:{thread_id}:{event_type}:{event_id}"
         
         # Store event in Redis
@@ -63,7 +78,7 @@ async def add_event(
         return {
             "thread_id": thread_id,
             "event_type": event_type,
-            "event_time": event_time,
+            "event_time": event_time if event_time else datetime.utcnow().isoformat(),
             "error": str(e),
             "status": "failed"
         }
@@ -137,9 +152,33 @@ async def get_events(
                     try:
                         event_time_str = event.get("event_time", "")
                         if not event_time_str:
+                            logger.warning(f"Event missing event_time: {event}")
                             continue
                         
-                        event_dt = datetime.fromisoformat(event_time_str.replace("Z", "+00:00"))
+                        # Handle potential None values or format issues
+                        try:
+                            # First try direct parsing of ISO format
+                            event_dt = datetime.fromisoformat(event_time_str.replace("Z", "+00:00"))
+                        except (AttributeError, ValueError) as e:
+                            # If that fails, try to handle common format issues
+                            logger.warning(f"Failed to parse event time '{event_time_str}': {e}")
+                            
+                            # Try fallback approaches
+                            try:
+                                # If it's None or not a string
+                                if event_time_str is None:
+                                    logger.error("Event time is None, skipping event")
+                                    continue
+                                    
+                                # Try different formats
+                                if 'T' in event_time_str:
+                                    event_dt = datetime.strptime(event_time_str, "%Y-%m-%dT%H:%M:%S.%f")
+                                else:
+                                    event_dt = datetime.strptime(event_time_str, "%Y-%m-%d %H:%M:%S.%f")
+                            except (ValueError, TypeError):
+                                # Last resort - skip this event
+                                logger.error(f"Could not parse event time '{event_time_str}' with any format, skipping event")
+                                continue
                         
                         # Apply date filters
                         if start_dt and event_dt < start_dt:
