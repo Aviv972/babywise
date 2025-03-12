@@ -45,6 +45,14 @@ async def post_process(state: Dict[str, Any]) -> Dict[str, Any]:
             state["metadata"] = {}
         state["metadata"]["processed_at"] = datetime.now().isoformat()
         
+        # Ensure context exists
+        if "context" not in state:
+            state["context"] = {}
+            
+        # Ensure user_context exists
+        if "user_context" not in state:
+            state["user_context"] = {}
+        
         # Get the latest user message
         messages = state.get("messages", [])
         latest_user_message = None
@@ -117,11 +125,34 @@ async def post_process(state: Dict[str, Any]) -> Dict[str, Any]:
             else:
                 logger.info("No command detected in message")
         
+        # Add any additional context processing here
+        # For example, extract any age mentions in the response
+        try:
+            latest_ai_message = None
+            for message in reversed(messages):
+                if not isinstance(message, HumanMessage):
+                    latest_ai_message = message.content
+                    break
+                    
+            if latest_ai_message and "context" in state:
+                # Update metadata about this conversation
+                if "domain" in state and state["domain"]:
+                    state["metadata"]["last_domain"] = state["domain"]
+                
+                # Log context information for debugging
+                if state["context"]:
+                    logger.info(f"Context after processing: {json.dumps(state.get('context', {}), default=str)}")
+                else:
+                    logger.warning("Context is empty after processing")
+        except Exception as context_error:
+            logger.error(f"Error in additional context processing: {str(context_error)}")
+        
         # Log the state summary for debugging
         logger.info("Post-processing complete - State summary:")
         logger.info(f"  Domain: {state.get('domain', 'unknown')}")
         logger.info(f"  Messages: {len(state.get('messages', []))}")
         logger.info(f"  Context: {json.dumps(state.get('context', {}), default=str)}")
+        logger.info(f"  User context: {json.dumps(state.get('user_context', {}), default=str)}")
         
         return state
     except Exception as e:

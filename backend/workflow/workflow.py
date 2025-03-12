@@ -19,6 +19,7 @@ from backend.workflow.generate_response import generate_response
 from backend.workflow.post_process import post_process
 from backend.workflow.command_processor import CommandProcessor
 from backend.services.redis_service import get_thread_state, save_thread_state
+import json
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -203,6 +204,16 @@ async def create_workflow():
             
             logger.info("Workflow execution completed successfully")
             
+            # Ensure required fields exist before saving
+            if "context" not in current_state:
+                current_state["context"] = {}
+                
+            if "user_context" not in current_state:
+                current_state["user_context"] = {}
+                
+            if "metadata" not in current_state:
+                current_state["metadata"] = {}
+            
             # Save the final state to Redis
             thread_id = current_state.get("metadata", {}).get("thread_id")
             if thread_id:
@@ -210,6 +221,10 @@ async def create_workflow():
                     # Convert set to list for JSON serialization
                     if "extracted_entities" in current_state and isinstance(current_state["extracted_entities"], set):
                         current_state["extracted_entities"] = list(current_state["extracted_entities"])
+                    
+                    # Log the context that will be saved
+                    logger.info(f"Saving context to Redis: {json.dumps(current_state.get('context', {}), default=str)}")
+                    logger.info(f"Saving user_context to Redis: {json.dumps(current_state.get('user_context', {}), default=str)}")
                     
                     await save_thread_state(thread_id, current_state)
                     logger.info(f"Saved workflow state to Redis for thread {thread_id}")

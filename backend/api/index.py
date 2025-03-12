@@ -468,6 +468,13 @@ async def direct_chat(request: ChatRequest):
             try:
                 state = await redis_service.get_thread_state(thread_id)
                 logger.info(f"Retrieved thread state from Redis for {thread_id}")
+                
+                # Log the retrieved context for debugging
+                if state:
+                    context = state.get("context", {})
+                    user_context = state.get("user_context", {})
+                    logger.info(f"Retrieved context from Redis: {json.dumps(context, default=str)}")
+                    logger.info(f"Retrieved user_context from Redis: {json.dumps(user_context, default=str)}")
             except Exception as e:
                 logger.error(f"Error retrieving thread state: {str(e)}")
             
@@ -477,6 +484,14 @@ async def direct_chat(request: ChatRequest):
                 state["metadata"]["language"] = request.language
                 state["metadata"]["thread_id"] = thread_id
                 logger.info(f"Created new thread state for {thread_id}")
+            
+            # Ensure that context exists
+            if "context" not in state:
+                state["context"] = {}
+                
+            # Ensure that user_context exists
+            if "user_context" not in state:
+                state["user_context"] = {}
             
             # Add user message to state
             user_message = HumanMessage(content=request.message)
@@ -496,6 +511,12 @@ async def direct_chat(request: ChatRequest):
                 
                 # Save thread state to Redis
                 try:
+                    # Log the context that will be saved
+                    context = result.get("context", {})
+                    user_context = result.get("user_context", {})
+                    logger.info(f"Saving context to Redis: {json.dumps(context, default=str)}")
+                    logger.info(f"Saving user_context to Redis: {json.dumps(user_context, default=str)}")
+                    
                     await redis_service.save_thread_state(thread_id, result)
                     logger.info(f"Saved thread state to Redis for {thread_id}")
                 except Exception as e:

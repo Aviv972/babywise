@@ -79,6 +79,10 @@ async def extract_context(state: Dict[str, Any]) -> Dict[str, Any]:
        logger.info("Starting extract_context function")
        messages = state["messages"]
        logger.info(f"Messages count: {len(messages)}")
+       
+       # Ensure context exists and is initialized as a dictionary
+       if "context" not in state:
+           state["context"] = {}
        context = state["context"]
        logger.info(f"Initial context: {context}")
        
@@ -107,7 +111,15 @@ async def extract_context(state: Dict[str, Any]) -> Dict[str, Any]:
        if latest_msg.type != "human":
            logger.info("Latest message is not from human, returning unchanged state")
            return state
-      
+       
+       # Save context related to the conversation
+       if "baby_age_mentioned" in extracted_entities and "baby_age" in context:
+           # Store age mentioned in a separate variable to make it more accessible
+           state["user_context"]["baby_age"] = context["baby_age"]["value"]
+           state["user_context"]["baby_age_unit"] = context["baby_age"]["unit"]
+           logger.info(f"Stored baby age in user_context: {state['user_context']['baby_age']} {state['user_context']['baby_age_unit']}")
+       
+       # Continue with the rest of the function
        content = latest_msg.content.lower()
        logger.info(f"Processing message content: {content[:50]}...")
       
