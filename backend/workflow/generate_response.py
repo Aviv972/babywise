@@ -99,6 +99,9 @@ async def generate_response(state: Dict[str, Any]) -> Dict[str, Any]:
             
             # Create the prompt template
             logger.info("Creating prompt template")
+            # Escape the JSON curly braces in the context to avoid f-string variable interpolation issues
+            context_json = json.dumps(context, indent=2).replace("{", "{{").replace("}", "}}")
+            
             system_prompt = f"""
 You are the Babywise Assistant, a specialized AI assistant for new and expecting parents.
 
@@ -107,7 +110,7 @@ You are the Babywise Assistant, a specialized AI assistant for new and expecting
 {lang_instructions}
 
 Current context:
-{json.dumps(context, indent=2)}
+{context_json}
             """
             
             prompt = ChatPromptTemplate.from_messages([
