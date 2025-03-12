@@ -210,6 +210,15 @@ async def execute_list_command(key: str, command: str, value: str) -> bool:
         logger.error(f"Error executing list command {command} for {key}: {e}")
         return False
 
+# Add list_append function that was referenced in routine_db.py but was missing
+async def list_append(key: str, value: str) -> bool:
+    """
+    Append a value to a Redis list.
+    This is a convenience wrapper around execute_list_command using rpush.
+    """
+    logger.debug(f"Appending to list {key}: {value}")
+    return await execute_list_command(key, "rpush", value)
+
 # Get multiple values from Redis in a single connection
 async def get_multiple(keys: List[str]) -> Dict[str, Any]:
     """Get multiple values from Redis in a single connection."""
