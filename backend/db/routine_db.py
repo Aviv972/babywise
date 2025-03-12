@@ -166,7 +166,26 @@ async def get_events(
                     continue
                 
                 try:
-                    event = json.loads(event_json)
+                    # First we need to check if our event_json is already an object or a JSON string
+                    if isinstance(event_json, str):
+                        try:
+                            event = json.loads(event_json)
+                        except json.JSONDecodeError:
+                            # If the event_json is just a key (not the actual content), we need to fetch the actual data
+                            logger.warning(f"Event key retrieval issue - got a key instead of data: {event_json}")
+                            actual_event_data = await client.get(event_json)
+                            if actual_event_data:
+                                try:
+                                    event = json.loads(actual_event_data)
+                                except json.JSONDecodeError:
+                                    logger.warning(f"Error decoding JSON from key: {event_json}")
+                                    continue
+                            else:
+                                logger.warning(f"No data found for event key: {event_json}")
+                                continue
+                    else:
+                        # If it's already an object (deserialized JSON), use it directly
+                        event = event_json
                     
                     # Apply type filter if specified
                     if event_type and event.get("event_type") != event_type:
