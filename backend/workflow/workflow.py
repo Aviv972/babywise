@@ -35,6 +35,14 @@ class GraphState(TypedDict):
     user_context: Dict[str, Any]
     routines: Dict[str, List[Dict[str, Any]]]
 
+# Workflow class to provide invoke() method
+class WorkflowInvoker:
+    def __init__(self, runner_func):
+        self.runner_func = runner_func
+        
+    async def invoke(self, state: Dict[str, Any]) -> Dict[str, Any]:
+        return await self.runner_func(state)
+
 # Initialize global variables
 _workflow = None
 memory_saver = MemorySaver()
@@ -217,7 +225,8 @@ async def create_workflow():
                 state["messages"].append(AIMessage(content="I apologize, but I encountered an error processing your request. Could you please try again?"))
             return state
     
-    return workflow_runner
+    # Wrap the runner function in a class with invoke method
+    return WorkflowInvoker(workflow_runner)
 
 async def get_workflow():
     """Get or create the workflow"""
