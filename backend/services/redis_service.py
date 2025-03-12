@@ -13,6 +13,8 @@ import contextlib
 from typing import Optional, Dict, Any, List, Tuple, AsyncGenerator
 from datetime import datetime, timedelta
 from enum import Enum
+import pickle
+import time
 
 # Import from compatibility layer instead of directly importing aioredis
 from backend.services.redis_compat import (
@@ -260,4 +262,82 @@ async def get_multiple(keys: List[str]) -> Dict[str, Any]:
     except Exception as e:
         logger.error(f"Error getting multiple keys {keys}: {e}")
     
-    return result 
+    return result
+
+async def set_with_fallback(key: str, value: Any, expiry: int = None) -> bool:
+    """Set a value in Redis with fallback to pickle file if Redis fails."""
+    try:
+        # Try Redis first
+        client = await get_redis_client()
+        if client:
+            serialized = json.dumps(value)
+            if expiry:
+                await client.setex(key, expiry, serialized)
+            else:
+                await client.set(key, serialized)
+            logger.info(f"Successfully set Redis key: {key}")
+            return True
+        else:
+            # Redis is not available, use pickle fallback
+            save_to_pickle(key, value)
+            logger.info(f"Redis unavailable, saved key to pickle: {key}")
+            return True
+    except Exception as e:
+        # Handle Redis errors with pickle fallback
+        logger.warning(f"Error setting Redis key {key}: {e}. Using pickle fallback.")
+        try:
+            save_to_pickle(key, value)
+            return True
+        except Exception as e:
+            logger.error(f"Fallback failed for key {key}: {e}")
+            return False
+
+async def delete_with_fallback(key: str) -> bool:
+    """Delete a key from Redis with fallback to pickle file if Redis fails."""
+    try:
+        # Try Redis first
+        client = await get_redis_client()
+        if client:
+            await client.delete(key)
+            logger.info(f"Successfully deleted Redis key: {key}")
+            return True
+        else:
+            # Redis is not available, use pickle fallback
+            delete_from_pickle(key)
+            logger.info(f"Redis unavailable, deleted key from pickle: {key}")
+            return True
+    except Exception as e:
+        # Handle Redis errors with pickle fallback
+        logger.warning(f"Error deleting Redis key {key}: {e}. Using pickle fallback.")
+        try:
+            delete_from_pickle(key)
+            return True
+        except Exception as e:
+            logger.error(f"Fallback deletion failed for key {key}: {e}")
+            return False
+
+def save_to_pickle(key: str, value: Any) -> None:
+    """Save value to a pickle file as fallback storage."""
+    # Create directory if it doesn't exist
+    os.makedirs("./data/cache", exist_ok=True)
+    
+    # Create a sanitized filename from the key
+    # Replace characters that are invalid in filenames
+    sanitized_key = key.replace(":", "_").replace("/", "_").replace("\\", "_")
+    filepath = f"./data/cache/{sanitized_key}.pickle"
+    
+    with open(filepath, 'wb') as f:
+        pickle.dump((value, int(time.time())), f)
+
+def delete_from_pickle(key: str) -> None:
+    """Delete a pickle file used as fallback storage."""
+    # Create a sanitized filename from the key
+    sanitized_key = key.replace(":", "_").replace("/", "_").replace("\\", "_")
+    filepath = f"./data/cache/{sanitized_key}.pickle"
+    
+    # Check if file exists before attempting to delete
+    if os.path.exists(filepath):
+        os.remove(filepath)
+        logger.info(f"Deleted pickle file: {filepath}")
+    else:
+        logger.info(f"Pickle file not found: {filepath}") 

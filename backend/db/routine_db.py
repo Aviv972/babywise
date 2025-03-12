@@ -179,20 +179,30 @@ async def get_events(
                             logger.warning(f"Event missing event_time: {event}")
                             continue
                         
+                        logger.info(f"Processing event of type {event.get('event_type')} with time: {event_time_str}")
+                        
                         # Handle potential None values or format issues
                         try:
                             # First try direct parsing of ISO format with timezone handling
-                            event_time_str = event_time_str.replace("Z", "+00:00")
+                            if event_time_str.endswith('Z'):
+                                logger.info(f"Converting Z timezone format to +00:00 for event time: {event_time_str}")
+                                event_time_str = event_time_str.replace("Z", "+00:00")
+                                
                             # Parse to timezone-aware datetime, then convert to naive in UTC for comparison
                             event_dt = datetime.fromisoformat(event_time_str)
+                            
                             # If it has timezone info, convert to UTC and remove timezone
                             if event_dt.tzinfo is not None:
                                 from datetime import timezone
+                                old_dt = event_dt
                                 event_dt = event_dt.astimezone(timezone.utc).replace(tzinfo=None)
-                                logger.info(f"Converted event time to UTC naive datetime: {event_dt}")
+                                logger.info(f"Converted timezone-aware datetime {old_dt} to UTC naive datetime: {event_dt}")
+                            else:
+                                logger.info(f"Event time is already a naive datetime: {event_dt}")
+                                
                         except (AttributeError, ValueError) as e:
                             # If that fails, try to handle common format issues
-                            logger.warning(f"Failed to parse event time '{event_time_str}': {e}")
+                            logger.warning(f"Failed to parse event time '{event_time_str}' with fromisoformat: {e}")
                             
                             # Try fallback approaches
                             try:
@@ -204,22 +214,47 @@ async def get_events(
                                 # Try different formats
                                 if 'T' in event_time_str:
                                     event_dt = datetime.strptime(event_time_str, "%Y-%m-%dT%H:%M:%S.%f")
+                                    logger.info(f"Parsed with ISO format without timezone: {event_dt}")
                                 else:
                                     event_dt = datetime.strptime(event_time_str, "%Y-%m-%d %H:%M:%S.%f")
+                                    logger.info(f"Parsed with standard datetime format: {event_dt}")
                                 # These are already naive datetimes, no need to modify
-                                logger.info(f"Parsed event time with fallback method: {event_dt}")
-                            except (ValueError, TypeError):
-                                # Last resort - skip this event
-                                logger.error(f"Could not parse event time '{event_time_str}' with any format, skipping event")
-                                continue
+                            except (ValueError, TypeError) as e:
+                                logger.error(f"Could not parse event time '{event_time_str}' with standard formats: {e}")
+                                
+                                # One last attempt with common formats
+                                try:
+                                    if 'T' in event_time_str:
+                                        # Try without milliseconds
+                                        event_dt = datetime.strptime(event_time_str.split('.')[0], "%Y-%m-%dT%H:%M:%S")
+                                        logger.info(f"Parsed with ISO format without milliseconds: {event_dt}")
+                                    else:
+                                        # Try without milliseconds
+                                        event_dt = datetime.strptime(event_time_str.split('.')[0], "%Y-%m-%d %H:%M:%S")
+                                        logger.info(f"Parsed with standard format without milliseconds: {event_dt}")
+                                except (ValueError, TypeError, IndexError):
+                                    # Last resort - skip this event
+                                    logger.error(f"All parsing attempts failed for event time '{event_time_str}', skipping event")
+                                    continue
                         
+                        # Log filter checks
+                        if start_dt:
+                            logger.info(f"Checking if event time {event_dt} is after start date {start_dt}")
+                            
+                        if end_dt:
+                            logger.info(f"Checking if event time {event_dt} is before end date {end_dt}")
+                            
                         # Apply date filters
                         if start_dt and event_dt < start_dt:
+                            logger.info(f"Event time {event_dt} is before start date {start_dt}, skipping")
                             continue
+                            
                         if end_dt and event_dt > end_dt:
+                            logger.info(f"Event time {event_dt} is after end date {end_dt}, skipping")
                             continue
                         
                         # Event passed all filters
+                        logger.info(f"Event passed all filters: {event.get('event_type')} at {event_dt}")
                         events.append(event)
                         
                     except (ValueError, TypeError) as e:
@@ -282,6 +317,7 @@ async def get_summary(thread_id: str, period: str = "day") -> Dict[str, Any]:
             period_name = "Last 24 Hours"
         
         logger.info(f"Generating {period} summary for thread {thread_id} from {start_date.isoformat()} to {now.isoformat()}")
+        logger.info(f"Current server time (UTC): {now.isoformat()}")
         
         # Try to get cached summary first
         cache_key = f"{RedisKeyPrefix.ROUTINE_SUMMARY}:{thread_id}:{period}"
@@ -292,26 +328,36 @@ async def get_summary(thread_id: str, period: str = "day") -> Dict[str, Any]:
             return cached_summary
         
         # Get events for the period
+        logger.info(f"Retrieving events for thread {thread_id} from {start_date.isoformat()} to {now.isoformat()}")
         events = await get_events(
             thread_id=thread_id,
             start_date=start_date,
             end_date=now
         )
         
+        # Log the raw events retrieved for debugging
+        logger.info(f"Retrieved {len(events)} total events for summary generation")
+        for i, event in enumerate(events):
+            logger.info(f"Raw event {i+1}: type={event.get('event_type')}, time={event.get('event_time')}, id={event.get('local_id')}")
+            
         if not events:
-            logger.info(f"No events found for thread {thread_id} in the {period} period")
+            logger.warning(f"No events found for thread {thread_id} in the {period} period")
             empty_summary = {
                 "period": period,
                 "period_name": period_name,
                 "start_date": start_date.isoformat(),
                 "end_date": now.isoformat(),
-                "thread_id": thread_id,  # Adding thread_id for better traceability
+                "thread_id": thread_id,
                 "routines": {}
             }
             
             # Cache the empty summary briefly to avoid repeated processing
-            await set_with_fallback(cache_key, empty_summary, 300)  # Cache for 5 minutes
+            await set_with_fallback(cache_key, empty_summary, 60)  # Cache for 1 minute to allow for retries
             return empty_summary
+        
+        # Force clear any existing cache to ensure fresh results
+        await delete_with_fallback(cache_key)
+        logger.info(f"Cleared existing summary cache for thread {thread_id}")
         
         # Process sleep events
         sleep_events = [e for e in events if e.get("event_type") == "sleep"]
