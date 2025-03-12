@@ -264,13 +264,30 @@ async def get_multiple(keys: List[str]) -> Dict[str, Any]:
     
     return result
 
+# Add the missing get_redis_client function which should have been implemented
+async def get_redis_client():
+    """
+    Get a Redis client instance.
+    This wraps the redis_connection context manager to provide a client instance.
+    """
+    try:
+        # Use the existing redis_connection context manager
+        client = await redis_connection().__aenter__()
+        if not client:
+            logger.warning("Failed to get Redis client, returning None")
+            return None
+        return client
+    except Exception as e:
+        logger.error(f"Error getting Redis client: {e}")
+        return None
+
 async def set_with_fallback(key: str, value: Any, expiry: int = None) -> bool:
-    """Set a value in Redis with fallback to pickle file if Redis fails."""
+    """Set a value in Redis with fallback to in-memory cache for serverless environments."""
     try:
         # Try Redis first
         client = await get_redis_client()
         if client:
-            serialized = json.dumps(value)
+            serialized = json.dumps(value, cls=MessageJSONEncoder)
             if expiry:
                 await client.setex(key, expiry, serialized)
             else:
@@ -278,66 +295,107 @@ async def set_with_fallback(key: str, value: Any, expiry: int = None) -> bool:
             logger.info(f"Successfully set Redis key: {key}")
             return True
         else:
-            # Redis is not available, use pickle fallback
-            save_to_pickle(key, value)
-            logger.info(f"Redis unavailable, saved key to pickle: {key}")
+            # Redis is not available, use in-memory fallback
+            _memory_cache[key] = {
+                "value": value,
+                "timestamp": datetime.now().timestamp(),
+                "expiry": expiry
+            }
+            logger.info(f"Redis unavailable, stored key in memory: {key}")
             return True
     except Exception as e:
-        # Handle Redis errors with pickle fallback
-        logger.warning(f"Error setting Redis key {key}: {e}. Using pickle fallback.")
+        # Handle Redis errors with memory fallback
+        logger.warning(f"Error setting Redis key {key}: {e}. Using memory fallback.")
         try:
-            save_to_pickle(key, value)
+            _memory_cache[key] = {
+                "value": value,
+                "timestamp": datetime.now().timestamp(),
+                "expiry": expiry
+            }
+            logger.info(f"Stored key in memory fallback: {key}")
             return True
         except Exception as e:
-            logger.error(f"Fallback failed for key {key}: {e}")
+            logger.error(f"All fallbacks failed for key {key}: {e}")
             return False
 
 async def delete_with_fallback(key: str) -> bool:
-    """Delete a key from Redis with fallback to pickle file if Redis fails."""
+    """Delete a key from Redis with fallback to in-memory cache for serverless environments."""
     try:
         # Try Redis first
         client = await get_redis_client()
         if client:
             await client.delete(key)
             logger.info(f"Successfully deleted Redis key: {key}")
+            
+            # Also clear from memory cache in case it exists there
+            if key in _memory_cache:
+                del _memory_cache[key]
+            
             return True
         else:
-            # Redis is not available, use pickle fallback
-            delete_from_pickle(key)
-            logger.info(f"Redis unavailable, deleted key from pickle: {key}")
+            # Redis is not available, use in-memory fallback
+            if key in _memory_cache:
+                del _memory_cache[key]
+                logger.info(f"Redis unavailable, deleted key from memory: {key}")
             return True
     except Exception as e:
-        # Handle Redis errors with pickle fallback
-        logger.warning(f"Error deleting Redis key {key}: {e}. Using pickle fallback.")
+        # Handle Redis errors with memory fallback
+        logger.warning(f"Error deleting Redis key {key}: {e}. Trying memory fallback.")
         try:
-            delete_from_pickle(key)
+            if key in _memory_cache:
+                del _memory_cache[key]
+                logger.info(f"Deleted key from memory fallback: {key}")
             return True
         except Exception as e:
-            logger.error(f"Fallback deletion failed for key {key}: {e}")
+            logger.error(f"All fallbacks failed for deleting key {key}: {e}")
             return False
 
-def save_to_pickle(key: str, value: Any) -> None:
-    """Save value to a pickle file as fallback storage."""
-    # Create directory if it doesn't exist
-    os.makedirs("./data/cache", exist_ok=True)
-    
-    # Create a sanitized filename from the key
-    # Replace characters that are invalid in filenames
-    sanitized_key = key.replace(":", "_").replace("/", "_").replace("\\", "_")
-    filepath = f"./data/cache/{sanitized_key}.pickle"
-    
-    with open(filepath, 'wb') as f:
-        pickle.dump((value, int(time.time())), f)
+# Replace the filesystem-based fallback functions with in-memory versions
+# since Vercel has a read-only filesystem
 
-def delete_from_pickle(key: str) -> None:
-    """Delete a pickle file used as fallback storage."""
-    # Create a sanitized filename from the key
-    sanitized_key = key.replace(":", "_").replace("/", "_").replace("\\", "_")
-    filepath = f"./data/cache/{sanitized_key}.pickle"
-    
-    # Check if file exists before attempting to delete
-    if os.path.exists(filepath):
-        os.remove(filepath)
-        logger.info(f"Deleted pickle file: {filepath}")
-    else:
-        logger.info(f"Pickle file not found: {filepath}") 
+async def get_with_fallback(key: str) -> Any:
+    """Get a value from Redis with fallback to in-memory cache for serverless environments."""
+    try:
+        # Try Redis first
+        async with redis_connection() as client:
+            if client:
+                value = await client.get(key)
+                if value:
+                    try:
+                        return json.loads(value)
+                    except json.JSONDecodeError:
+                        return value
+            
+            # If Redis fails or key doesn't exist, check memory cache
+            if key in _memory_cache:
+                cached_item = _memory_cache[key]
+                now = datetime.now().timestamp()
+                
+                # Check if expired
+                if cached_item["expiry"] and (now - cached_item["timestamp"]) > cached_item["expiry"]:
+                    del _memory_cache[key]
+                    logger.info(f"Memory cache item expired for key: {key}")
+                    return None
+                
+                logger.info(f"Retrieved key from memory cache: {key}")
+                return cached_item["value"]
+            
+            return None
+    except Exception as e:
+        logger.warning(f"Error getting Redis key {key}: {e}. Checking memory fallback.")
+        
+        # Try memory cache
+        if key in _memory_cache:
+            cached_item = _memory_cache[key]
+            now = datetime.now().timestamp()
+            
+            # Check if expired
+            if cached_item["expiry"] and (now - cached_item["timestamp"]) > cached_item["expiry"]:
+                del _memory_cache[key]
+                logger.info(f"Memory cache item expired for key: {key}")
+                return None
+            
+            logger.info(f"Retrieved key from memory cache: {key}")
+            return cached_item["value"]
+        
+        return None 
