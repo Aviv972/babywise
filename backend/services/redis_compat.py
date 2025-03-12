@@ -10,6 +10,8 @@ import json
 import logging
 import asyncio
 import contextlib
+import sys
+import traceback
 from typing import Optional, Dict, Any, List, AsyncGenerator, Union
 from datetime import datetime
 
@@ -21,64 +23,124 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Determine which Redis client to use
-USE_REDIS_ASYNCIO = True  # Set to True to use redis.asyncio, False for aioredis
-
-try:
-    if USE_REDIS_ASYNCIO:
-        # Modern approach with redis.asyncio
-        logger.info("Using redis.asyncio for Redis operations")
-        from redis import asyncio as redis
-        from redis.exceptions import (
-            AuthenticationError, 
-            ConnectionError,
-            TimeoutError,
-            ResponseError,
-            DataError
-        )
-    else:
-        # Legacy approach with aioredis
-        logger.info("Using aioredis for Redis operations")
-        import aioredis as redis
-        from aioredis.exceptions import (
-            AuthenticationError, 
-            ConnectionError,
-            TimeoutError,
-            ResponseError,
-            DataError
-        )
-except ImportError as e:
-    logger.error(f"Failed to import Redis package: {e}")
-    # Create fallback exception classes
-    class RedisError(Exception): pass
-    class ConnectionError(RedisError): pass
-    class TimeoutError(RedisError): pass
-    class AuthenticationError(ConnectionError): pass
-    class ResponseError(RedisError): pass
-    class DataError(RedisError): pass
-    
-    # Create a mock Redis class with proper structure
-    class Redis:
-        """Mock Redis class to prevent errors when Redis imports fail."""
-        @staticmethod
-        async def from_url(*args, **kwargs):
-            logger.error("Using Redis mock - Redis functionality will not work")
-            return None
-    
-    # Create a mock redis module that has Redis as an attribute
-    class RedisMock:
-        """Mock redis module to mimic the structure of imported redis modules."""
-        def __init__(self):
-            self.Redis = Redis
-
-    # Create the redis variable that would normally be imported
-    redis = RedisMock()
-
 # Redis connection configuration
 REDIS_URL = os.environ.get("STORAGE_URL", "redis://localhost:6379/0")
 
 # In-memory fallback cache when Redis is unavailable
 _memory_cache: Dict[str, Any] = {}
+
+# Define exception classes that will be used regardless of which backend is imported
+class RedisError(Exception): pass
+class ConnectionError(RedisError): pass
+class TimeoutError(RedisError): pass
+class AuthenticationError(ConnectionError): pass
+class ResponseError(RedisError): pass
+class DataError(RedisError): pass
+
+# Create a basic MockRedis class with the minimum implementation needed
+class MockRedis:
+    """Mock Redis implementation for when Redis is unavailable."""
+    
+    def __init__(self, *args, **kwargs):
+        self._data = {}
+        logger.warning("Created MockRedis instance - Redis functionality will be limited")
+    
+    async def ping(self):
+        logger.info("MockRedis: PING called")
+        return "PONG"
+    
+    async def get(self, key):
+        logger.info(f"MockRedis: GET {key}")
+        return self._data.get(key)
+    
+    async def set(self, key, value, ex=None):
+        logger.info(f"MockRedis: SET {key} (expiry: {ex})")
+        self._data[key] = value
+        return True
+    
+    async def delete(self, key):
+        logger.info(f"MockRedis: DELETE {key}")
+        if key in self._data:
+            del self._data[key]
+            return 1
+        return 0
+    
+    async def info(self):
+        logger.info("MockRedis: INFO called")
+        return {
+            "redis_version": "mock",
+            "redis_mode": "standalone",
+            "used_memory_human": "0K",
+            "connected_clients": "1",
+            "uptime_in_seconds": "0"
+        }
+    
+    async def close(self):
+        logger.info("MockRedis: Connection closed")
+        pass
+
+# Determine which Redis client to use
+USE_REDIS_ASYNCIO = os.environ.get("USE_REDIS_ASYNCIO", "True").lower() in ("true", "1", "yes")
+
+# Import the appropriate Redis client
+redis = None
+redis_backend = "none"
+import_error = None
+
+try:
+    if USE_REDIS_ASYNCIO:
+        # Try modern approach with redis.asyncio
+        try:
+            from redis import asyncio as redis_client
+            from redis.exceptions import (
+                AuthenticationError as RedisAuthError, 
+                ConnectionError as RedisConnError,
+                TimeoutError as RedisTimeoutError,
+                ResponseError as RedisResponseError,
+                DataError as RedisDataError
+            )
+            redis = redis_client
+            redis_backend = "redis.asyncio"
+            logger.info("Successfully imported redis.asyncio for Redis operations")
+        except ImportError as e:
+            import_error = f"Failed to import redis.asyncio: {e}"
+            logger.warning(import_error)
+            redis = None
+    
+    # If redis.asyncio import failed or we're configured to use aioredis, try aioredis
+    if redis is None:
+        try:
+            import aioredis as redis_client
+            from aioredis.exceptions import (
+                AuthenticationError as RedisAuthError, 
+                ConnectionError as RedisConnError,
+                TimeoutError as RedisTimeoutError,
+                ResponseError as RedisResponseError,
+                DataError as RedisDataError
+            )
+            redis = redis_client
+            redis_backend = "aioredis"
+            logger.info("Successfully imported aioredis for Redis operations")
+        except ImportError as e:
+            import_error = f"Failed to import aioredis: {e}"
+            logger.warning(import_error)
+            redis = None
+except Exception as e:
+    import_error = f"Unexpected error during Redis imports: {e}"
+    logger.error(import_error)
+    logger.error(traceback.format_exc())
+    redis = None
+
+# Get Redis connection details for logging
+redis_url_masked = REDIS_URL
+if "://" in redis_url_masked:
+    parts = redis_url_masked.split("://", 1)
+    if "@" in parts[1]:
+        # Mask credentials in URL for security in logs
+        auth_server = parts[1].split("@", 1)
+        redis_url_masked = f"{parts[0]}://***:***@{auth_server[1]}"
+
+logger.info(f"Redis backend: {redis_backend}, URL: {redis_url_masked}")
 
 # Custom JSON encoder to handle message objects
 class MessageJSONEncoder(json.JSONEncoder):
@@ -117,14 +179,16 @@ async def redis_connection() -> AsyncGenerator[Optional[Any], None]:
             yield None
             return
         
-        # Check if redis module is properly initialized
-        if not redis or not hasattr(redis, 'Redis') and not hasattr(redis, 'from_url'):
-            logger.error("Redis module is not properly initialized")
-            yield None
+        # Check if we have a real Redis module
+        if redis is None:
+            logger.error(f"No Redis client available: {import_error}")
+            # Return a mock Redis client as a last resort
+            logger.warning("Creating a MockRedis instance as a fallback")
+            yield MockRedis()
             return
             
         try:
-            if USE_REDIS_ASYNCIO:
+            if redis_backend == "redis.asyncio":
                 # Modern redis.asyncio approach
                 client = await redis.Redis.from_url(
                     redis_url,
@@ -133,7 +197,7 @@ async def redis_connection() -> AsyncGenerator[Optional[Any], None]:
                     socket_connect_timeout=2.0,
                     retry_on_timeout=True
                 )
-            else:
+            elif redis_backend == "aioredis":
                 # Legacy aioredis approach
                 client = await redis.from_url(
                     redis_url,
@@ -143,9 +207,16 @@ async def redis_connection() -> AsyncGenerator[Optional[Any], None]:
                     socket_connect_timeout=2.0,
                     retry_on_timeout=True
                 )
+            else:
+                logger.error(f"Unsupported Redis backend: {redis_backend}")
+                yield MockRedis()
+                return
         except Exception as connection_error:
             logger.error(f"Failed to create Redis client: {connection_error}")
-            yield None
+            logger.error(traceback.format_exc())
+            # Return a mock Redis client as a last resort
+            logger.warning("Creating a MockRedis instance due to connection failure")
+            yield MockRedis()
             return
         
         try:
@@ -156,13 +227,17 @@ async def redis_connection() -> AsyncGenerator[Optional[Any], None]:
                 yield client
             else:
                 logger.error("Redis client creation returned None")
-                yield None
+                # Return a mock Redis client as a last resort
+                logger.warning("Creating a MockRedis instance due to null client")
+                yield MockRedis()
         except Exception as e:
             # Connection failed validation
             logger.error(f"Redis connection validation failed: {e}")
+            logger.error(traceback.format_exc())
+            # Clean up the failed connection
             if client:
                 try:
-                    if USE_REDIS_ASYNCIO:
+                    if redis_backend == "redis.asyncio":
                         await client.close()  # redis.asyncio only needs close()
                     else:
                         client.close()
@@ -170,18 +245,24 @@ async def redis_connection() -> AsyncGenerator[Optional[Any], None]:
                 except Exception as ex:
                     logger.warning(f"Error closing invalid Redis connection: {ex}")
                 client = None
-            yield None
+            
+            # Return a mock Redis client as a last resort
+            logger.warning("Creating a MockRedis instance due to validation failure")
+            yield MockRedis()
     except Exception as e:
         # Connection creation failed
         logger.error(f"Error creating Redis connection: {e}")
-        yield None
+        logger.error(traceback.format_exc())
+        # Return a mock Redis client as a last resort
+        logger.warning("Creating a MockRedis instance due to unexpected error")
+        yield MockRedis()
     finally:
         # Always ensure the connection is properly closed
         if client:
             try:
-                if USE_REDIS_ASYNCIO:
+                if redis_backend == "redis.asyncio":
                     await client.close()  # redis.asyncio only needs close()
-                else:
+                elif redis_backend == "aioredis":
                     client.close()
                     await client.wait_closed()  # aioredis needs both
             except Exception as e:
@@ -191,18 +272,17 @@ async def redis_connection() -> AsyncGenerator[Optional[Any], None]:
 async def test_redis_connection() -> bool:
     """Test that Redis connection is working and log detailed diagnostic information."""
     try:
-        logger.info(f"Testing Redis connection with backend: {'redis.asyncio' if USE_REDIS_ASYNCIO else 'aioredis'}")
-        logger.info(f"Redis URL: {os.environ.get('STORAGE_URL', REDIS_URL)}")
+        logger.info(f"Testing Redis connection with backend: {redis_backend}")
+        logger.info(f"Redis URL: {redis_url_masked}")
         
-        # Check if redis module is available
-        if not redis or (not hasattr(redis, 'Redis') and not hasattr(redis, 'from_url')):
-            logger.error("Redis module is not properly initialized or imported")
+        if redis is None:
+            logger.error(f"No Redis client available: {import_error}")
             return False
         
         # Try to create a connection
         async with redis_connection() as client:
-            if client is None:
-                logger.error("Could not establish Redis connection")
+            if isinstance(client, MockRedis):
+                logger.warning("Using MockRedis instance - this is not a real Redis connection")
                 return False
                 
             # Test connection with ping
@@ -231,14 +311,13 @@ async def get_with_fallback(key: str) -> Optional[Any]:
     # Try Redis first
     try:
         async with redis_connection() as client:
-            if client:
-                value = await client.get(key)
-                if value:
-                    try:
-                        result = json.loads(value)
-                        return result
-                    except json.JSONDecodeError:
-                        return value
+            value = await client.get(key)
+            if value:
+                try:
+                    result = json.loads(value)
+                    return result
+                except json.JSONDecodeError:
+                    return value
     except Exception as e:
         logger.warning(f"Error getting {key} from Redis: {e}")
     
@@ -263,9 +342,8 @@ async def set_with_fallback(key: str, value: Any, expiration: int = 86400) -> bo
     redis_success = False
     try:
         async with redis_connection() as client:
-            if client:
-                await client.set(key, value, ex=expiration)
-                redis_success = True
+            await client.set(key, value, ex=expiration)
+            redis_success = True
     except Exception as e:
         logger.warning(f"Error setting {key} in Redis: {e}")
     
@@ -289,9 +367,8 @@ async def delete_with_fallback(key: str) -> bool:
     redis_success = False
     try:
         async with redis_connection() as client:
-            if client:
-                await client.delete(key)
-                redis_success = True
+            await client.delete(key)
+            redis_success = True
     except Exception as e:
         logger.warning(f"Error deleting {key} from Redis: {e}")
     
@@ -313,36 +390,37 @@ async def get_redis_diagnostics() -> Dict[str, Any]:
         Dict with diagnostic information including:
         - status: "connected", "error", or "unavailable"
         - error: Error message if applicable
-        - backend: "redis.asyncio" or "aioredis"
+        - backend: The Redis backend being used
         - version: Redis server version if available
         - memory_used: Memory used by Redis server if available
     """
     result = {
         "status": "unavailable",
         "error": None,
-        "backend": "redis.asyncio" if USE_REDIS_ASYNCIO else "aioredis",
-        "url": os.environ.get("STORAGE_URL", REDIS_URL).replace(
-            # Mask credentials in URL for security
-            "://", "://***:***@", 1
-        ) if "://" in os.environ.get("STORAGE_URL", REDIS_URL) else os.environ.get("STORAGE_URL", REDIS_URL),
+        "backend": redis_backend,
+        "import_error": import_error,
+        "url": redis_url_masked,
         "version": None,
         "memory_used": None,
         "clients_connected": None,
-        "uptime_seconds": None
+        "uptime_seconds": None,
+        "using_mock": False
     }
     
     try:
-        # Check if redis module is available
-        if not redis or (not hasattr(redis, 'Redis') and not hasattr(redis, 'from_url')):
+        if redis is None:
             result["status"] = "error"
-            result["error"] = "Redis module not properly initialized"
+            result["error"] = f"Redis module not available: {import_error}"
+            result["using_mock"] = True
             return result
         
         # Try to create a connection
         async with redis_connection() as client:
-            if client is None:
-                result["status"] = "error"
-                result["error"] = "Could not establish Redis connection"
+            if isinstance(client, MockRedis):
+                result["status"] = "mock"
+                result["error"] = "Using mock Redis implementation"
+                result["using_mock"] = True
+                result["version"] = "mock"
                 return result
                 
             # Test connection with ping
@@ -367,6 +445,7 @@ async def get_redis_diagnostics() -> Dict[str, Any]:
     except Exception as e:
         result["status"] = "error"
         result["error"] = str(e)
+        result["traceback"] = traceback.format_exc().split("\n")
     
     return result
 
