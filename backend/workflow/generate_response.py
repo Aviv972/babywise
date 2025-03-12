@@ -56,17 +56,14 @@ def add_messages(messages, state):
     return state
 
 async def generate_response(state: Dict[str, Any]) -> Dict[str, Any]:
-    """Generate a response based on the conversation history and domain"""
+    """Generate a response using the LLM."""
     try:
-        logger.info("Starting generate_response function")
-        
-        # Extract the last user message
-        user_messages = [m for m in state["messages"] if isinstance(m, HumanMessage)]
+        # Extract user messages
+        user_messages = [msg for msg in state.get("messages", []) if isinstance(msg, HumanMessage)]
         if not user_messages:
             logger.warning("No user messages found in state")
-            state["messages"].append(AIMessage(content="I'm sorry, I didn't receive a message to respond to. How can I help you?"))
             return state
-            
+        
         last_user_message = user_messages[-1].content
         logger.info(f"Last user message: '{last_user_message}'")
         
@@ -77,11 +74,13 @@ async def generate_response(state: Dict[str, Any]) -> Dict[str, Any]:
         logger.info(f"Domain: {domain}, Language: {language}")
         
         # Check if OpenAI API key is available
-        openai_api_key = os.environ.get("OPENAI_API_KEY")
-        logger.info(f"OpenAI API key available: {bool(openai_api_key)}")
-        if not openai_api_key:
-            logger.warning("OpenAI API key not found, using mock response")
+        openai_api_key = os.environ.get("OPENAI_API_KEY", "")
+        # If key starts with ${, it's not properly set
+        if not openai_api_key or openai_api_key.startswith("${"):
+            logger.warning("OpenAI API key not found or invalid, using mock response")
             return create_mock_response(state, domain, language)
+            
+        logger.info(f"OpenAI API key available: {bool(openai_api_key)}")
         
         try:
             # Initialize the LLM
@@ -126,6 +125,10 @@ Current context:
             
             logger.info(f"Preparing to invoke LLM with {len(chat_history)} messages in history")
             
+            # Prepare the formatted chat history outside the try block
+            formatted_chat_history = [{"role": role, "content": content} for role, content in chat_history]
+            logger.info(f"Formatted chat history with {len(formatted_chat_history)} messages")
+            
             # Invoke the LLM
             try:
                 logger.info("Invoking LLM")
@@ -135,7 +138,6 @@ Current context:
                 
                 # Create the actual payload
                 chain = prompt | llm
-                formatted_chat_history = [{"role": role, "content": content} for role, content in chat_history]
                 logger.info(f"Sending actual request to LLM with {len(formatted_chat_history)} messages")
                 
                 # Log a sample of the input to help with debugging
@@ -156,6 +158,7 @@ Current context:
                         openai_api_key=openai_api_key
                     )
                     chain = prompt | fallback_llm
+                    # Use the formatted_chat_history from above
                     result = await chain.ainvoke({"chat_history": formatted_chat_history})
                     response = result.content
                     logger.info(f"Fallback LLM response received (first 100 chars): {response[:100]}")
@@ -169,14 +172,14 @@ Current context:
             return state
         
         except Exception as e:
-            logger.error(f"Error in response generation: {str(e)}", exc_info=True)
+            logger.error(f"Error in generate_response: {str(e)}", exc_info=True)
             return create_mock_response(state, domain, language)
             
-    except Exception as outer_e:
-        logger.error(f"Outer exception in generate_response: {str(outer_e)}", exc_info=True)
-        # Ensure we always return a valid state
-        if "messages" in state:
-            state["messages"].append(AIMessage(content="I apologize, but I encountered an error while processing your request. Please try again."))
+    except Exception as e:
+        logger.error(f"Unexpected error in generate_response: {str(e)}", exc_info=True)
+        # Add a default response in case of error
+        mock_response = "I'm here to help with any baby care questions, including sleep, feeding, development, and more. How can I assist you today?"
+        state["messages"].append(AIMessage(content=mock_response))
         return state
 
 def create_mock_response(state: Dict[str, Any], domain: str, language: str) -> Dict[str, Any]:

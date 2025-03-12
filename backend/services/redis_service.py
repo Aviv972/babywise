@@ -12,6 +12,7 @@ import aioredis
 from typing import Optional, Dict, Any, List, Tuple
 from datetime import datetime, timedelta
 from enum import Enum
+from backend.models.message_types import HumanMessage, AIMessage, BaseMessage
 
 # Configure logging with more detailed format
 logging.basicConfig(
@@ -25,6 +26,18 @@ logger = logging.getLogger(__name__)
 REDIS_URL = "redis://***:***@redis-10101.c135.eu-central-1-1.ec2.redns.redis-cloud.com:10101"
 _redis_pool = None
 _event_loop = None
+
+# Custom JSON encoder to handle message objects
+class MessageJSONEncoder(json.JSONEncoder):
+    """Custom JSON encoder that can serialize message objects."""
+    def default(self, obj):
+        if isinstance(obj, (HumanMessage, AIMessage, BaseMessage)):
+            return obj.to_dict()
+        elif isinstance(obj, set):
+            return list(obj)
+        elif isinstance(obj, datetime):
+            return obj.isoformat()
+        return super().default(obj)
 
 def get_event_loop():
     """Get or create an event loop for Redis operations."""
@@ -46,7 +59,8 @@ async def initialize_redis() -> None:
                 REDIS_URL,
                 minsize=1,
                 maxsize=10,
-                encoding='utf-8'
+                encoding='utf-8',
+                decode_responses=True
             )
             logger.info("Redis connection pool initialized successfully")
     except Exception as e:
@@ -255,7 +269,9 @@ class RedisManager:
         client = await self.get_client()
         if client:
             try:
-                await client.set(key, json.dumps(value), ex=expiration)
+                # Use custom encoder for serialization
+                json_value = json.dumps(value, cls=MessageJSONEncoder)
+                await client.set(key, json_value, ex=expiration)
                 return True
             except Exception as e:
                 logger.error(f"Redis set operation failed for key {key}: {e}")

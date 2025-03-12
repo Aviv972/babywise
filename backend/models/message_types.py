@@ -7,6 +7,7 @@ additional functionality for Redis serialization.
 from typing import Dict, Any, Optional, Literal, Type, TypeVar, Union, List, Set
 from pydantic import BaseModel, Field
 from datetime import datetime
+import json
 
 T = TypeVar("T", bound="BaseMessage")
 
@@ -29,15 +30,37 @@ class BaseMessage(BaseModel):
     def to_dict(self) -> Dict[str, Any]:
         """Convert message to dictionary format."""
         return self.model_dump()
+        
+    def __getitem__(self, key):
+        """Allow dictionary-like access to properties."""
+        if hasattr(self, key):
+            return getattr(self, key)
+        return None
+    
+    def get(self, key, default=None):
+        """Mimic dict.get() method for compatibility."""
+        if hasattr(self, key):
+            return getattr(self, key)
+        return default
 
 class HumanMessage(BaseMessage):
     """Message from a human user."""
     type: Literal["human"] = "human"
+    
+    def __eq__(self, other):
+        if isinstance(other, HumanMessage):
+            return self.content == other.content
+        return False
 
 class AIMessage(BaseMessage):
     """Message from the AI assistant."""
     type: Literal["ai"] = "ai"
     function_call: Optional[Dict[str, Any]] = Field(default=None, description="Optional function call details")
+    
+    def __eq__(self, other):
+        if isinstance(other, AIMessage):
+            return self.content == other.content
+        return False
 
 class Context(BaseModel):
     """Context information for the conversation."""
@@ -75,6 +98,8 @@ class StateModel(BaseModel):
         state_dict = self.model_dump()
         # Convert set to list for JSON serialization
         state_dict["extracted_entities"] = list(state_dict["extracted_entities"])
+        # Convert message objects to dictionaries
+        state_dict["messages"] = [msg.to_dict() if hasattr(msg, "to_dict") else msg for msg in state_dict["messages"]]
         return state_dict
 
     @classmethod
@@ -83,10 +108,22 @@ class StateModel(BaseModel):
         # Convert list back to set for extracted_entities
         if "extracted_entities" in data and isinstance(data["extracted_entities"], list):
             data["extracted_entities"] = set(data["extracted_entities"])
+        # Convert message dictionaries back to objects
+        if "messages" in data and isinstance(data["messages"], list):
+            messages = []
+            for msg in data["messages"]:
+                if isinstance(msg, dict):
+                    messages.append(create_message_from_dict(msg))
+                else:
+                    messages.append(msg)
+            data["messages"] = [msg for msg in messages if msg is not None]
         return cls(**data)
 
 def create_message_from_dict(data: Dict[str, Any]) -> Optional[Union[HumanMessage, AIMessage]]:
     """Create a message instance from a dictionary."""
+    if isinstance(data, (HumanMessage, AIMessage)):
+        return data
+        
     msg_type = data.get("type", "unknown").lower()
     if msg_type == "human":
         return HumanMessage.from_dict(data)

@@ -363,11 +363,20 @@ async def direct_get_context(thread_id: str):
                 # Extract messages
                 messages = []
                 for msg in state.get("messages", []):
-                    msg_type = "human" if msg.get("type") == "human" else "ai"
-                    messages.append({
-                        "content": msg.get("content", ""),
-                        "type": msg_type
-                    })
+                    # Check if it's already a dict or a message object
+                    if isinstance(msg, dict):
+                        msg_type = "human" if msg.get("type") == "human" else "ai"
+                        messages.append({
+                            "content": msg.get("content", ""),
+                            "type": msg_type
+                        })
+                    else:
+                        # It's a message object
+                        msg_type = "human" if hasattr(msg, "type") and msg.type == "human" else "ai"
+                        messages.append({
+                            "content": getattr(msg, "content", ""),
+                            "type": msg_type
+                        })
                 
                 return JSONResponse({
                     "thread_id": thread_id,
@@ -378,24 +387,28 @@ async def direct_get_context(thread_id: str):
                 return JSONResponse({
                     "thread_id": thread_id,
                     "messages": [],
-                    "status": "empty"
+                    "status": "success"
                 })
                 
         except Exception as e:
             logger.error(f"Error using backend context implementation: {str(e)}")
             logger.error(traceback.format_exc())
-            raise
             
+            return JSONResponse({
+                "thread_id": thread_id, 
+                "messages": [],
+                "status": "error",
+                "error": f"Failed to retrieve context: {str(e)}"
+            })
     except Exception as e:
         logger.error(f"Error in direct context endpoint: {str(e)}")
         logger.error(traceback.format_exc())
         
-        # Return a fallback response
         return JSONResponse({
             "thread_id": thread_id,
             "messages": [],
             "status": "error",
-            "error": str(e)
+            "error": f"Failed to process request: {str(e)}"
         })
 
 @app.post("/api/chat/reset/{thread_id}")
