@@ -319,32 +319,105 @@ async def get_summary(thread_id: str, period: str = "day") -> Dict[str, Any]:
         
         logger.info(f"Found {len(sleep_events)} sleep start events and {len(sleep_end_events)} sleep end events")
         
+        # Debug log the events for troubleshooting
+        for i, event in enumerate(sleep_events):
+            logger.info(f"Sleep event {i+1}: time={event.get('event_time')}, id={event.get('local_id')}")
+        
+        for i, event in enumerate(sleep_end_events):
+            logger.info(f"Sleep end event {i+1}: time={event.get('event_time')}, id={event.get('local_id')}")
+        
         total_sleep_duration = 0
         sleep_periods = []
+        
+        # If we have sleep_end events but no sleep events, try to create sleep periods for them
+        # Many parents only track wakeups but not sleep starts
+        if len(sleep_end_events) > 0 and len(sleep_events) == 0:
+            logger.info("Only found sleep end events, creating virtual sleep periods")
+            
+            # Sort sleep end events by time
+            sorted_end_events = sorted(sleep_end_events, key=lambda x: x.get("event_time", ""))
+            
+            for end_event in sorted_end_events:
+                try:
+                    end_time = datetime.fromisoformat(end_event.get("event_time", "").replace("Z", "+00:00"))
+                    
+                    # Use a reasonable default sleep duration for infants (2 hours)
+                    start_time = end_time - timedelta(hours=2)
+                    
+                    # If start time would be before our date range, adjust it
+                    if start_time < start_date:
+                        start_time = start_date
+                    
+                    duration_hours = (end_time - start_time).total_seconds() / 3600
+                    
+                    if duration_hours <= 0:
+                        logger.warning(f"Calculated non-positive duration: {duration_hours} for sleep end event. Skipping.")
+                        continue
+                    
+                    total_sleep_duration += duration_hours
+                    
+                    sleep_periods.append({
+                        "start": start_time.isoformat(),
+                        "end": end_event.get("event_time"),
+                        "duration": round(duration_hours, 2),
+                        "start_id": None,  # Virtual sleep start
+                        "end_id": end_event.get("local_id"),
+                        "is_virtual": True
+                    })
+                    
+                    logger.info(f"Created virtual sleep period: {start_time} to {end_time}, duration: {duration_hours} hours")
+                except (ValueError, AttributeError) as e:
+                    logger.warning(f"Error processing sleep end event: {e}")
+                    continue
         
         # Track processed sleep end events to avoid duplicates
         processed_sleep_ends = set()
         
+        # Match sleep events with sleep end events
         for sleep_event in sleep_events:
             try:
-                sleep_start = datetime.fromisoformat(sleep_event.get("event_time", "").replace("Z", "+00:00"))
+                sleep_event_time = sleep_event.get("event_time", "")
+                logger.info(f"Processing sleep event with time: {sleep_event_time}")
+                
+                # Handle Z vs +00:00 timezone formats
+                sleep_start = datetime.fromisoformat(sleep_event_time.replace("Z", "+00:00"))
                 
                 # Find matching end event
                 matching_end = None
+                closest_time_diff = timedelta(days=1)  # Start with a large value
+                
                 for end_event in sleep_end_events:
                     # Skip already processed end events
                     end_id = end_event.get("local_id")
                     if end_id in processed_sleep_ends:
+                        logger.info(f"Skipping already processed end event with id: {end_id}")
+                        continue
+                    
+                    end_time_str = end_event.get("event_time", "")
+                    logger.info(f"Checking sleep end event with time: {end_time_str}")
+                    
+                    try:
+                        end_time = datetime.fromisoformat(end_time_str.replace("Z", "+00:00"))
+                    except (ValueError, AttributeError) as e:
+                        logger.warning(f"Error parsing end time '{end_time_str}': {e}")
                         continue
                         
-                    end_time = datetime.fromisoformat(end_event.get("event_time", "").replace("Z", "+00:00"))
+                    # End time must be after start time
                     if end_time > sleep_start:
-                        matching_end = end_event
-                        if end_id:  # Mark as processed if it has an ID
-                            processed_sleep_ends.add(end_id)
-                        break
+                        time_diff = end_time - sleep_start
+                        
+                        # If it's the closest end time so far, use it
+                        if time_diff < closest_time_diff:
+                            closest_time_diff = time_diff
+                            matching_end = end_event
                 
                 if matching_end:
+                    end_id = matching_end.get("local_id")
+                    logger.info(f"Found matching end event with id: {end_id} and time: {matching_end.get('event_time')}")
+                    
+                    if end_id:  # Mark as processed if it has an ID
+                        processed_sleep_ends.add(end_id)
+                    
                     sleep_end = datetime.fromisoformat(matching_end.get("event_time", "").replace("Z", "+00:00"))
                     duration_minutes = int((sleep_end - sleep_start).total_seconds() / 60)  # Duration in minutes
                     duration_hours = duration_minutes / 60  # Convert to hours
@@ -364,9 +437,72 @@ async def get_summary(thread_id: str, period: str = "day") -> Dict[str, Any]:
                         "end_id": matching_end.get("local_id")
                     })
                     logger.info(f"Matched sleep period: {sleep_start} to {sleep_end}, duration: {duration_hours} hours")
+                else:
+                    # If no matching end event, create a sleep period with estimated end time
+                    # Assume baby is still sleeping if sleep event is recent (within 12 hours)
+                    time_since_sleep = now - sleep_start
+                    
+                    if time_since_sleep.total_seconds() < 12 * 3600:  # 12 hours
+                        logger.info(f"No end event found, but sleep start is recent. Creating open-ended sleep period.")
+                        
+                        # For ongoing sleep, use current time as temporary end
+                        duration_hours = time_since_sleep.total_seconds() / 3600
+                        
+                        sleep_periods.append({
+                            "start": sleep_event.get("event_time"),
+                            "end": None,  # Ongoing sleep
+                            "duration": round(duration_hours, 2),
+                            "start_id": sleep_event.get("local_id"),
+                            "end_id": None,
+                            "is_ongoing": True
+                        })
+                        
+                        # Add to total duration (ongoing sleep counts too)
+                        total_sleep_duration += duration_hours
+                        
+                        logger.info(f"Created ongoing sleep period: {sleep_start} to (now), duration so far: {duration_hours} hours")
             except (ValueError, AttributeError) as e:
                 logger.warning(f"Error processing sleep event: {e}")
                 continue
+        
+        # Process unmatched sleep end events that might not have a corresponding start
+        # This is valuable when parents only logged the wake-up time but not the sleep time
+        for end_event in sleep_end_events:
+            end_id = end_event.get("local_id")
+            if end_id not in processed_sleep_ends:
+                try:
+                    logger.info(f"Processing unmatched sleep end event with id: {end_id}")
+                    
+                    end_time = datetime.fromisoformat(end_event.get("event_time", "").replace("Z", "+00:00"))
+                    
+                    # Assume a reasonable sleep duration (2 hours) before the end time
+                    start_time = end_time - timedelta(hours=2)
+                    
+                    # If start time would be before our date range, adjust it
+                    if start_time < start_date:
+                        start_time = start_date
+                    
+                    duration_hours = (end_time - start_time).total_seconds() / 3600
+                    
+                    if duration_hours <= 0:
+                        logger.warning(f"Calculated non-positive duration: {duration_hours} for sleep end event. Skipping.")
+                        continue
+                    
+                    total_sleep_duration += duration_hours
+                    
+                    sleep_periods.append({
+                        "start": start_time.isoformat(),
+                        "end": end_event.get("event_time"),
+                        "duration": round(duration_hours, 2),
+                        "start_id": None,  # Virtual sleep start
+                        "end_id": end_event.get("local_id"),
+                        "is_virtual": True
+                    })
+                    
+                    logger.info(f"Created virtual sleep period for unmatched end event: {start_time} to {end_time}, duration: {duration_hours} hours")
+                except (ValueError, AttributeError) as e:
+                    logger.warning(f"Error processing unmatched sleep end event: {e}")
+                    continue
         
         # Process feed events
         feed_events = [e for e in events if e.get("event_type") in ["feed", "feeding"]]
