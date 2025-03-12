@@ -95,23 +95,44 @@ async def generate_response(state: Dict[str, Any]) -> Dict[str, Any]:
         recent_messages = messages[-10:] if len(messages) > 10 else messages
         
         for msg in recent_messages:
-            if isinstance(msg, HumanMessage):
-                role = "user"
+            # Handle both message objects and dictionary representations
+            if isinstance(msg, dict):
+                # Handle dict representation
+                role = "user" if msg.get("type") == "human" else "assistant"
+                content = msg.get("content", "")
+                logger.info(f"Processing message as dict: type={role}, content={content[:30]}...")
+            elif hasattr(msg, "type") and hasattr(msg, "content"):
+                # Handle message object
+                role = "user" if msg.type == "human" else "assistant"
+                content = msg.content
             else:
-                role = "assistant"
-            history.append({"role": role, "content": msg.content})
+                # Skip invalid message format
+                logger.warning(f"Skipping message with invalid format: {type(msg)}")
+                continue
+                
+            history.append({"role": role, "content": content})
         
         # Check for context references before generating response
-        latest_message = messages[-1].content.lower() if messages else ""
+        if messages and len(messages) > 0:
+            latest_message = messages[-1]
+            if isinstance(latest_message, dict):
+                latest_content = latest_message.get("content", "").lower()
+            elif hasattr(latest_message, "content"):
+                latest_content = latest_message.content.lower()
+            else:
+                latest_content = ""
+        else:
+            latest_content = ""
+            
         age_query = False
         
         # Detect if the user is asking about the baby's age in any language
         age_queries_en = ["how old", "what age", "what is the age"]
         age_queries_he = ["בת כמה", "בן כמה", "מה הגיל"]
         
-        if language == "en" and any(q in latest_message.lower() for q in age_queries_en):
+        if language == "en" and any(q in latest_content for q in age_queries_en):
             age_query = True
-        elif language == "he" and any(q in latest_message for q in age_queries_he):
+        elif language == "he" and any(q in latest_content for q in age_queries_he):
             age_query = True
             
         # Add context-aware system message
