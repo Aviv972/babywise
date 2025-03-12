@@ -39,26 +39,37 @@ class DataError(RedisError): pass
 
 # Create a basic MockRedis class with the minimum implementation needed
 class MockRedis:
-    """Mock Redis implementation for when Redis is unavailable."""
+    """
+    Mock Redis implementation for when Redis is unavailable.
+    
+    This class simulates a Redis client with the minimum functionality needed
+    to support the application. It stores data in memory and provides both
+    sync and async methods to match the interfaces of both redis.asyncio and aioredis.
+    """
     
     def __init__(self, *args, **kwargs):
         self._data = {}
-        logger.warning("Created MockRedis instance - Redis functionality will be limited")
+        logger.warning("Created MockRedis instance - Redis functionality will be limited to in-memory operations")
     
+    # Core Redis operations (async)
     async def ping(self):
+        """Simulates Redis PING command. Always returns 'PONG'."""
         logger.info("MockRedis: PING called")
         return "PONG"
     
     async def get(self, key):
+        """Simulates Redis GET command. Returns value from in-memory store."""
         logger.info(f"MockRedis: GET {key}")
         return self._data.get(key)
     
     async def set(self, key, value, ex=None):
+        """Simulates Redis SET command. Stores value in memory."""
         logger.info(f"MockRedis: SET {key} (expiry: {ex})")
         self._data[key] = value
         return True
     
     async def delete(self, key):
+        """Simulates Redis DELETE command. Removes value from memory."""
         logger.info(f"MockRedis: DELETE {key}")
         if key in self._data:
             del self._data[key]
@@ -66,6 +77,7 @@ class MockRedis:
         return 0
     
     async def info(self):
+        """Simulates Redis INFO command. Returns mock server information."""
         logger.info("MockRedis: INFO called")
         return {
             "redis_version": "mock",
@@ -75,21 +87,33 @@ class MockRedis:
             "uptime_in_seconds": "0"
         }
     
-    # Add methods needed for connection handling
-    # Async version of close for redis.asyncio compatibility
+    # Connection management (both sync and async variants)
+    # For redis.asyncio compatibility
     async def aclose(self):
-        logger.info("MockRedis: aclose() called")
-        pass
+        """Async close method for redis.asyncio compatibility."""
+        logger.info("MockRedis: async close() called")
+        # No actual cleanup needed for mock
+        return True
     
-    # Sync version of close for aioredis compatibility
+    # For aioredis compatibility (sync variant)
     def close(self):
+        """Sync close method for aioredis compatibility."""
         logger.info("MockRedis: sync close() called")
-        pass
+        # No actual cleanup needed for mock
+        return True
     
     # For aioredis compatibility
     async def wait_closed(self):
+        """Async wait_closed method for aioredis compatibility."""
         logger.info("MockRedis: wait_closed() called")
-        pass
+        # No actual waiting needed for mock
+        return True
+        
+    # Extra methods that might be called by different Redis clients
+    def __del__(self):
+        """Destructor method to handle cleanup if object is garbage collected."""
+        logger.info("MockRedis: __del__ called")
+        # No cleanup needed
 
 # Determine which Redis client to use
 USE_REDIS_ASYNCIO = os.environ.get("USE_REDIS_ASYNCIO", "True").lower() in ("true", "1", "yes")
@@ -173,8 +197,8 @@ async def redis_connection() -> AsyncGenerator[Optional[Any], None]:
     
     This creates an isolated connection for a single operation
     and guarantees it will be properly closed regardless of outcome.
-    
-    Works with both aioredis and redis.asyncio.
+    The function always returns either a real Redis client or a MockRedis instance,
+    and properly handles cleanup in all cases.
     
     Usage:
         async with redis_connection() as client:
@@ -189,91 +213,103 @@ async def redis_connection() -> AsyncGenerator[Optional[Any], None]:
         redis_url = os.environ.get("STORAGE_URL", REDIS_URL)
         if not redis_url:
             logger.error("Redis URL not configured")
-            mock = MockRedis()
+            client = MockRedis()
             is_mock = True
-            yield mock
-            return
+            yield client
         
         # Check if we have a real Redis module
-        if redis is None:
+        elif redis is None:
             logger.error(f"No Redis client available: {import_error}")
-            # Return a mock Redis client as a last resort
             logger.warning("Creating a MockRedis instance as a fallback (no Redis module)")
-            mock = MockRedis()
+            client = MockRedis()
             is_mock = True
-            yield mock
-            return
+            yield client
             
-        try:
-            if redis_backend == "redis.asyncio":
-                # Modern redis.asyncio approach
-                client = await redis.Redis.from_url(
-                    redis_url,
-                    decode_responses=True,
-                    socket_timeout=3.0,
-                    socket_connect_timeout=2.0,
-                    retry_on_timeout=True
-                )
-                logger.debug(f"Created redis.asyncio client: {type(client).__name__}")
-            elif redis_backend == "aioredis":
-                # Legacy aioredis approach
-                client = await redis.from_url(
-                    redis_url,
-                    encoding="utf-8",
-                    decode_responses=True,
-                    socket_timeout=3.0,
-                    socket_connect_timeout=2.0,
-                    retry_on_timeout=True
-                )
-                logger.debug(f"Created aioredis client: {type(client).__name__}")
-            else:
-                logger.error(f"Unsupported Redis backend: {redis_backend}")
-                mock = MockRedis()
+        else:
+            try:
+                if redis_backend == "redis.asyncio":
+                    # Modern redis.asyncio approach
+                    client = await redis.Redis.from_url(
+                        redis_url,
+                        decode_responses=True,
+                        socket_timeout=3.0,
+                        socket_connect_timeout=2.0,
+                        retry_on_timeout=True
+                    )
+                    logger.debug(f"Created redis.asyncio client: {type(client).__name__}")
+                elif redis_backend == "aioredis":
+                    # Legacy aioredis approach
+                    client = await redis.from_url(
+                        redis_url,
+                        encoding="utf-8",
+                        decode_responses=True,
+                        socket_timeout=3.0,
+                        socket_connect_timeout=2.0,
+                        retry_on_timeout=True
+                    )
+                    logger.debug(f"Created aioredis client: {type(client).__name__}")
+                else:
+                    logger.error(f"Unsupported Redis backend: {redis_backend}")
+                    client = MockRedis()
+                    is_mock = True
+                    yield client
+                    return
+                
+                try:
+                    # Validate connection with ping
+                    if client:
+                        await client.ping()
+                        # Connection is valid, yield it to the caller
+                        yield client
+                    else:
+                        logger.error("Redis client creation returned None")
+                        logger.warning("Creating a MockRedis instance due to null client")
+                        client = MockRedis()
+                        is_mock = True
+                        yield client
+                except Exception as e:
+                    # Connection failed validation
+                    logger.error(f"Redis connection validation failed: {e}")
+                    logger.error(traceback.format_exc())
+                    
+                    # Clean up the failed connection
+                    if client and not is_mock:
+                        try:
+                            # Attempt to close the failed connection
+                            if redis_backend == "redis.asyncio" and hasattr(client, 'close'):
+                                if asyncio.iscoroutinefunction(client.close):
+                                    await client.close()
+                            elif redis_backend == "aioredis":
+                                if hasattr(client, 'close'):
+                                    client.close()
+                                if hasattr(client, 'wait_closed'):
+                                    await client.wait_closed()
+                        except Exception as ex:
+                            logger.warning(f"Error closing invalid Redis connection: {ex}")
+                        
+                        # Reset client since we're going to use a mock
+                        client = None
+                    
+                    # Return a mock Redis client as a last resort
+                    logger.warning("Creating a MockRedis instance due to validation failure")
+                    client = MockRedis()
+                    is_mock = True
+                    yield client
+            except Exception as connection_error:
+                logger.error(f"Failed to create Redis client: {connection_error}")
+                logger.error(traceback.format_exc())
+                logger.warning("Creating a MockRedis instance due to connection failure")
+                client = MockRedis()
                 is_mock = True
-                yield mock
-                return
-        except Exception as connection_error:
-            logger.error(f"Failed to create Redis client: {connection_error}")
-            logger.error(traceback.format_exc())
-            # Return a mock Redis client as a last resort
-            logger.warning("Creating a MockRedis instance due to connection failure")
-            mock = MockRedis()
-            is_mock = True
-            yield mock
-            return
-        
-        try:
-            # Validate connection with ping
-            if client:
-                await client.ping()
-                # Connection is valid, yield it to the caller
                 yield client
-            else:
-                logger.error("Redis client creation returned None")
-                # Return a mock Redis client as a last resort
-                logger.warning("Creating a MockRedis instance due to null client")
-                mock = MockRedis()
-                is_mock = True
-                yield mock
-        except Exception as e:
-            # Connection failed validation
-            logger.error(f"Redis connection validation failed: {e}")
-            logger.error(traceback.format_exc())
-            
-            # Return a mock Redis client as a last resort
-            logger.warning("Creating a MockRedis instance due to validation failure")
-            mock = MockRedis()
-            is_mock = True
-            yield mock
     except Exception as e:
         # Connection creation failed
         logger.error(f"Error creating Redis connection: {e}")
         logger.error(traceback.format_exc())
-        # Return a mock Redis client as a last resort
         logger.warning("Creating a MockRedis instance due to unexpected error")
-        mock = MockRedis()
+        client = MockRedis()
         is_mock = True
-        yield mock
+        yield client
     finally:
         # Always ensure the connection is properly closed if it's a real client
         if client and not is_mock:
@@ -283,39 +319,85 @@ async def redis_connection() -> AsyncGenerator[Optional[Any], None]:
                 logger.debug(f"Closing Redis connection of type: {client_type}")
                 
                 # Different cleanup based on the actual client type
-                if redis_backend == "redis.asyncio":
+                if isinstance(client, MockRedis):
+                    # MockRedis cleanup is a no-op
+                    logger.debug("No cleanup needed for MockRedis")
+                elif redis_backend == "redis.asyncio":
                     try:
-                        await client.close()
-                        logger.debug("Successfully closed redis.asyncio connection")
+                        # Modern redis.asyncio uses async close()
+                        if hasattr(client, 'close') and asyncio.iscoroutinefunction(client.close):
+                            await client.close()
+                            logger.debug("Successfully closed redis.asyncio connection")
+                        else:
+                            logger.warning(f"redis.asyncio client missing async close() method: {client_type}")
                     except Exception as e:
                         logger.warning(f"Error when closing redis.asyncio connection: {e}")
                 elif redis_backend == "aioredis":
                     try:
-                        # aioredis needs both close() and wait_closed()
-                        client.close()
-                        await client.wait_closed()
-                        logger.debug("Successfully closed aioredis connection")
-                    except AttributeError:
-                        # If wait_closed() doesn't exist, try just close()
-                        logger.warning("aioredis client doesn't have wait_closed(), trying just close()")
-                        if hasattr(client, 'close'):
-                            if asyncio.iscoroutinefunction(client.close):
+                        # Traditional aioredis cleanup sequence
+                        has_sync_close = hasattr(client, 'close') and not asyncio.iscoroutinefunction(client.close)
+                        has_wait_closed = hasattr(client, 'wait_closed') and asyncio.iscoroutinefunction(client.wait_closed)
+                        
+                        if has_sync_close:
+                            client.close()
+                            logger.debug("Called sync close() on aioredis connection")
+                        
+                        if has_wait_closed:
+                            await client.wait_closed()
+                            logger.debug("Successfully called wait_closed() on aioredis connection")
+                        elif not has_sync_close:
+                            # Fallback if we don't have the expected methods
+                            logger.warning("aioredis client missing standard close methods, trying alternatives")
+                            if hasattr(client, 'close') and asyncio.iscoroutinefunction(client.close):
                                 await client.close()
-                            else:
-                                client.close()
+                                logger.debug("Called async close() as fallback on aioredis connection")
                     except Exception as e:
                         logger.warning(f"Error when closing aioredis connection: {e}")
                 else:
-                    # Generic attempt for other client types
-                    try:
-                        if hasattr(client, 'close'):
-                            if asyncio.iscoroutinefunction(client.close):
-                                await client.close()
-                            else:
-                                client.close()
-                        logger.debug("Closed Redis connection with generic method")
-                    except Exception as e:
-                        logger.warning(f"Error during generic Redis connection close: {e}")
+                    # Generic attempt for unknown client types
+                    logger.debug(f"Using generic close for unknown Redis client type: {client_type}")
+                    
+                    # Try the various close methods we know about
+                    close_methods_tried = 0
+                    
+                    # Try async close() if available
+                    if hasattr(client, 'close') and asyncio.iscoroutinefunction(client.close):
+                        try:
+                            await client.close()
+                            logger.debug("Successfully called async close()")
+                            close_methods_tried += 1
+                        except Exception as e:
+                            logger.warning(f"Error calling async close(): {e}")
+                    
+                    # Try sync close() if available
+                    if hasattr(client, 'close') and not asyncio.iscoroutinefunction(client.close):
+                        try:
+                            client.close()
+                            logger.debug("Successfully called sync close()")
+                            close_methods_tried += 1
+                        except Exception as e:
+                            logger.warning(f"Error calling sync close(): {e}")
+                    
+                    # Try wait_closed() if available
+                    if hasattr(client, 'wait_closed') and asyncio.iscoroutinefunction(client.wait_closed):
+                        try:
+                            await client.wait_closed()
+                            logger.debug("Successfully called wait_closed()")
+                            close_methods_tried += 1
+                        except Exception as e:
+                            logger.warning(f"Error calling wait_closed(): {e}")
+                            
+                    # Try aclose() if available (some libraries use this name)
+                    if hasattr(client, 'aclose') and asyncio.iscoroutinefunction(client.aclose):
+                        try:
+                            await client.aclose()
+                            logger.debug("Successfully called aclose()")
+                            close_methods_tried += 1
+                        except Exception as e:
+                            logger.warning(f"Error calling aclose(): {e}")
+                    
+                    if close_methods_tried == 0:
+                        logger.warning(f"Found no close methods for client type {client_type}")
             except Exception as e:
                 # Log but don't re-raise - we don't want cleanup errors to propagate
                 logger.warning(f"Unexpected error during Redis connection cleanup: {e}")
