@@ -421,6 +421,7 @@ async def redis_connection() -> AsyncGenerator[Optional[Any], None]:
                     logger.debug("Detected aioredis client")
                     
                     # First try sync close if available
+                    close_methods_attempted = []
                     close_success = False
                     wait_closed_success = False
                     
@@ -429,11 +430,13 @@ async def redis_connection() -> AsyncGenerator[Optional[Any], None]:
                             if not asyncio.iscoroutinefunction(getattr(client, 'close')):
                                 client.close()
                                 logger.debug("Called sync close() on aioredis connection")
+                                close_methods_attempted.append("sync close()")
                                 close_success = True
                             else:
                                 logger.debug("Skipping async close() for now, will try after wait_closed()")
                         except Exception as e:
                             logger.warning(f"Error in aioredis client close(): {e}")
+                            close_methods_attempted.append("sync close() [failed]")
                     
                     # Then try wait_closed if available
                     if hasattr(client, 'wait_closed'):
@@ -441,22 +444,76 @@ async def redis_connection() -> AsyncGenerator[Optional[Any], None]:
                             if asyncio.iscoroutinefunction(getattr(client, 'wait_closed')):
                                 await client.wait_closed()
                                 logger.debug("Successfully called wait_closed() on aioredis connection")
+                                close_methods_attempted.append("wait_closed()")
                                 wait_closed_success = True
                             else:
                                 logger.warning("wait_closed() is not a coroutine function in aioredis client")
+                                close_methods_attempted.append("wait_closed() [not async]")
                         except Exception as e:
                             logger.warning(f"Error in aioredis client wait_closed(): {e}")
+                            close_methods_attempted.append("wait_closed() [failed]")
                     
                     # If we didn't run a sync close but have an async close, try that
                     if not close_success and hasattr(client, 'close') and asyncio.iscoroutinefunction(getattr(client, 'close')):
                         try:
                             await client.close()
                             logger.debug("Called async close() as fallback on aioredis connection")
+                            close_methods_attempted.append("async close()")
+                            close_success = True
                         except Exception as e:
                             logger.warning(f"Error in aioredis client async close(): {e}")
+                            close_methods_attempted.append("async close() [failed]")
+                    
+                    # Try connection.close() if available (some aioredis clients expose this)
+                    if not close_success and not wait_closed_success and hasattr(client, 'connection'):
+                        if hasattr(client.connection, 'close'):
+                            try:
+                                if asyncio.iscoroutinefunction(getattr(client.connection, 'close')):
+                                    await client.connection.close()
+                                    logger.debug("Successfully called connection.close() on aioredis connection")
+                                    close_methods_attempted.append("connection.close()")
+                                    close_success = True
+                                else:
+                                    client.connection.close()
+                                    logger.debug("Successfully called sync connection.close() on aioredis connection")
+                                    close_methods_attempted.append("sync connection.close()")
+                                    close_success = True
+                            except Exception as e:
+                                logger.warning(f"Error in aioredis client connection.close(): {e}")
+                                close_methods_attempted.append("connection.close() [failed]")
+                    
+                    # Try _pool.close() if available (aioredis 1.x)
+                    if not close_success and not wait_closed_success and hasattr(client, '_pool'):
+                        if hasattr(client._pool, 'close'):
+                            try:
+                                if asyncio.iscoroutinefunction(getattr(client._pool, 'close')):
+                                    await client._pool.close()
+                                    logger.debug("Successfully called _pool.close() on aioredis connection")
+                                    close_methods_attempted.append("_pool.close()")
+                                    close_success = True
+                                else:
+                                    client._pool.close()
+                                    logger.debug("Successfully called sync _pool.close() on aioredis connection") 
+                                    close_methods_attempted.append("sync _pool.close()")
+                                    close_success = True
+                            except Exception as e:
+                                logger.warning(f"Error in aioredis client _pool.close(): {e}")
+                                close_methods_attempted.append("_pool.close() [failed]")
                     
                     if not close_success and not wait_closed_success:
-                        logger.warning("Failed to close aioredis client with any method")
+                        logger.warning(f"Failed to close aioredis client with methods attempted: {', '.join(close_methods_attempted)}")
+                        # Log client information to help debugging
+                        logger.warning(f"Aioredis client type: {type(client).__name__}")
+                        logger.warning(f"Available methods: {[m for m in dir(client) if not m.startswith('_') and callable(getattr(client, m))]}")
+                        
+                        # Last resort: try to call __del__ directly
+                        if hasattr(client, '__del__'):
+                            try:
+                                client.__del__()
+                                logger.debug("Successfully called __del__() on aioredis client")
+                                close_success = True
+                            except Exception as e:
+                                logger.warning(f"Error calling __del__() on aioredis client: {e}")
                 else:
                     # Generic attempt for unknown client types - try everything
                     logger.debug(f"Using generic close for unknown Redis client type: {client_type}")
