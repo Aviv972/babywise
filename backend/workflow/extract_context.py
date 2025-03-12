@@ -27,7 +27,21 @@ CONTEXT_PATTERNS = {
        r'(\d+)[\s-]day[s]?[\s-]old',
        r'(\d+)[\s-]day[s]?',
        r'(\d+)[\s-]year[s]?[\s-]old',
-       r'(\d+)[\s-]year[s]?'
+       r'(\d+)[\s-]year[s]?',
+       # Additional patterns for conversational English
+       r'my (?:son|daughter|baby) is (\d+) month[s]? old',
+       r'my (?:son|daughter|baby) is (\d+) week[s]? old',
+       r'my (?:son|daughter|baby) is (\d+) day[s]? old',
+       r'my (?:son|daughter|baby) is (\d+) year[s]? old',
+       r'my (?:son|daughter|baby) is (\d+) month[s]?',
+       r'my (?:son|daughter|baby) is (\d+) week[s]?',
+       r'my (?:son|daughter|baby) is (\d+) day[s]?',
+       r'my (?:son|daughter|baby) is (\d+) year[s]?',
+       # Handle textual numbers in English
+       r'my (?:son|daughter|baby) is (one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve) month[s]? old',
+       r'my (?:son|daughter|baby) is (one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve) week[s]? old',
+       r'my (?:son|daughter|baby) is (one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve) month[s]?',
+       r'my (?:son|daughter|baby) is (one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve) week[s]?'
    ],
    # Hebrew patterns for age extraction
    "baby_age_hebrew": [
@@ -115,6 +129,13 @@ async def extract_context(state: Dict[str, Any]) -> Dict[str, Any]:
            except:
                # If conversion fails, create a new set
                state["extracted_entities"] = set()
+       
+       # Define text number to numeric mapping for English
+       text_to_number = {
+           "one": 1, "two": 2, "three": 3, "four": 4, "five": 5, 
+           "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10,
+           "eleven": 11, "twelve": 12
+       }
        
        extracted_entities = state["extracted_entities"]
        logger.info(f"Initial extracted_entities: {extracted_entities}")
@@ -246,7 +267,17 @@ async def extract_context(state: Dict[str, Any]) -> Dict[str, Any]:
                    for pattern in CONTEXT_PATTERNS["baby_age"]:
                        age_match = re.search(pattern, content, re.IGNORECASE)
                        if age_match:
-                           value = int(age_match.group(1))
+                           # Check if it's a textual number
+                           age_text = age_match.group(1).lower() 
+                           if age_text in text_to_number:
+                               value = text_to_number[age_text]
+                           else:
+                               try:
+                                   value = int(age_text)
+                               except ValueError:
+                                   # If we can't convert to int, skip this match
+                                   continue
+                               
                            if "week" in pattern:
                                unit = "weeks"
                            elif "day" in pattern:
@@ -259,7 +290,7 @@ async def extract_context(state: Dict[str, Any]) -> Dict[str, Any]:
                            context["baby_age"] = {
                                "value": value,
                                "unit": unit,
-                               "confidence": 0.8
+                               "confidence": 0.9  # Higher confidence for direct statements
                            }
                            extracted_entities.add("baby_age")
                            logger.info(f"Extracted baby age: {value} {unit}")
