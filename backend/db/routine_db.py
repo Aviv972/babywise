@@ -9,7 +9,10 @@ import logging
 import json
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Any, Union
-from backend.services.redis_service import get_redis, RedisKeyPrefix, get_with_fallback, set_with_fallback
+from backend.services.redis_service import (
+    get_redis, RedisKeyPrefix, get_with_fallback, set_with_fallback, 
+    delete_with_fallback, add_event_to_thread, execute_list_command
+)
 
 logger = logging.getLogger(__name__)
 
@@ -22,12 +25,6 @@ async def add_event(
 ) -> Dict[str, Any]:
     """Add a routine event to the database."""
     try:
-        # Get Redis connection
-        redis = await get_redis()
-        if redis is None:
-            logger.error("Failed to get Redis connection for adding event")
-            raise Exception("Redis connection failed")
-        
         # Create event object
         event = {
             "thread_id": thread_id,
@@ -38,25 +35,27 @@ async def add_event(
             "created_at": datetime.utcnow().isoformat()
         }
         
-        # Generate key for the event
+        # Generate event ID and key
         event_id = f"{event_time.replace(':', '-').replace('.', '-')}-{local_id or event_type}"
         event_key = f"{RedisKeyPrefix.EVENT}:{thread_id}:{event_type}:{event_id}"
         
         # Store event in Redis
-        try:
-            # Convert to JSON
-            event_json = json.dumps(event)
-            await redis.set(event_key, event_json)
+        event_json = json.dumps(event)
+        store_success = await set_with_fallback(event_key, event_json)
+        
+        if not store_success:
+            logger.error(f"Failed to store event for thread {thread_id}")
+            raise Exception("Failed to store event")
             
-            # Add to thread's event list
-            thread_events_key = f"{RedisKeyPrefix.THREAD_EVENTS}:{thread_id}"
-            await redis.rpush(thread_events_key, event_key)
+        # Add to thread's event list
+        list_success = await add_event_to_thread(thread_id, event_key)
+        
+        if not list_success:
+            logger.warning(f"Failed to add event to thread list for {thread_id}")
+            # Continue since the event is still stored
             
-            logger.info(f"Successfully added {event_type} event for thread {thread_id}")
-            return event
-        except Exception as e:
-            logger.error(f"Redis operation failed while adding event: {e}")
-            raise
+        logger.info(f"Successfully added {event_type} event for thread {thread_id}")
+        return event
         
     except Exception as e:
         logger.error(f"Error adding event: {e}")
@@ -78,49 +77,49 @@ async def get_events(
     """Get routine events with robust error handling."""
     logger.info(f"Getting events for thread {thread_id} with filters: type={event_type}, start={start_date}, end={end_date}")
     
+    # Convert date strings to datetime objects for comparison
+    start_dt = None
+    end_dt = None
+    
+    if start_date:
+        if isinstance(start_date, str):
+            try:
+                start_dt = datetime.fromisoformat(start_date.replace("Z", "+00:00"))
+            except ValueError:
+                logger.warning(f"Invalid start date format: {start_date}")
+        else:
+            start_dt = start_date
+    
+    if end_date:
+        if isinstance(end_date, str):
+            try:
+                end_dt = datetime.fromisoformat(end_date.replace("Z", "+00:00"))
+            except ValueError:
+                logger.warning(f"Invalid end date format: {end_date}")
+        else:
+            end_dt = end_date
+    
+    client = None
     try:
-        # Get Redis connection
-        redis = await get_redis()
-        if not redis:
+        client = await get_redis()
+        if not client:
             logger.error("Failed to get Redis connection for retrieving events")
             return []
         
         # Get the thread's event keys
         thread_events_key = f"{RedisKeyPrefix.THREAD_EVENTS}:{thread_id}"
-        event_keys = await redis.lrange(thread_events_key, 0, -1)
+        event_keys = await client.lrange(thread_events_key, 0, -1)
         
         if not event_keys:
             logger.info(f"No events found for thread {thread_id}")
             return []
-        
-        # Convert date strings to datetime objects for comparison
-        start_dt = None
-        end_dt = None
-        
-        if start_date:
-            if isinstance(start_date, str):
-                try:
-                    start_dt = datetime.fromisoformat(start_date.replace("Z", "+00:00"))
-                except ValueError:
-                    logger.warning(f"Invalid start date format: {start_date}")
-            else:
-                start_dt = start_date
-        
-        if end_date:
-            if isinstance(end_date, str):
-                try:
-                    end_dt = datetime.fromisoformat(end_date.replace("Z", "+00:00"))
-                except ValueError:
-                    logger.warning(f"Invalid end date format: {end_date}")
-            else:
-                end_dt = end_date
         
         # Fetch and filter events
         events = []
         for event_key in event_keys:
             try:
                 # Get event data
-                event_json = await redis.get(event_key)
+                event_json = await client.get(event_key)
                 if not event_json:
                     continue
                 
@@ -166,6 +165,14 @@ async def get_events(
     except Exception as e:
         logger.error(f"Error getting events: {e}")
         return []
+    finally:
+        # Always clean up the connection
+        if client:
+            try:
+                client.close()
+                await client.wait_closed()
+            except Exception:
+                pass
 
 async def get_latest_event(thread_id: str, event_type: str) -> Optional[Dict[str, Any]]:
     """Get the latest event of a specific type for a thread with improved error handling."""
@@ -208,6 +215,14 @@ async def get_summary(thread_id: str, period: str = "day") -> Dict[str, Any]:
         
         logger.info(f"Generating {period} summary for thread {thread_id} from {start_date.isoformat()} to {now.isoformat()}")
         
+        # Try to get cached summary first
+        cache_key = f"{RedisKeyPrefix.ROUTINE_SUMMARY}:{thread_id}:{period}"
+        cached_summary = await get_with_fallback(cache_key)
+        
+        if cached_summary:
+            logger.info(f"Using cached summary for thread {thread_id}, period {period}")
+            return cached_summary
+        
         # Get events for the period
         events = await get_events(
             thread_id=thread_id,
@@ -217,13 +232,17 @@ async def get_summary(thread_id: str, period: str = "day") -> Dict[str, Any]:
         
         if not events:
             logger.info(f"No events found for thread {thread_id} in the {period} period")
-            return {
+            empty_summary = {
                 "period": period,
                 "period_name": period_name,
                 "start_date": start_date.isoformat(),
                 "end_date": now.isoformat(),
                 "routines": {}
             }
+            
+            # Cache the empty summary briefly to avoid repeated processing
+            await set_with_fallback(cache_key, empty_summary, 300)  # Cache for 5 minutes
+            return empty_summary
         
         # Process sleep events
         sleep_events = [e for e in events if e.get("event_type") == "sleep"]
@@ -262,7 +281,7 @@ async def get_summary(thread_id: str, period: str = "day") -> Dict[str, Any]:
                 continue
         
         # Process feed events
-        feed_events = [e for e in events if e.get("event_type") == "feed" or e.get("event_type") == "feeding"]
+        feed_events = [e for e in events if e.get("event_type") in ["feed", "feeding"]]
         
         logger.info(f"Found {len(feed_events)} feeding events")
         
@@ -294,6 +313,9 @@ async def get_summary(thread_id: str, period: str = "day") -> Dict[str, Any]:
                 }
             }
         }
+        
+        # Cache the summary
+        await set_with_fallback(cache_key, summary, 300)  # Cache for 5 minutes
         
         logger.info(f"Generated summary for thread {thread_id} with {len(sleep_periods)} sleep periods and {len(feed_events)} feedings")
         return summary

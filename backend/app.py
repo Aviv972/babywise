@@ -8,7 +8,7 @@ It serves both the API endpoints and static frontend files.
 import os
 import logging
 from pathlib import Path
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
@@ -34,29 +34,80 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Add request logging middleware
+@app.middleware("http")
+async def log_requests(request: Request, call_next):
+    """Log all incoming requests and their responses"""
+    request_id = str(hash(request))[:8]  # Create a short unique ID for this request
+    logger.info(f"Request {request_id} started: {request.method} {request.url.path}")
+    
+    try:
+        response = await call_next(request)
+        logger.info(f"Request {request_id} completed: {response.status_code}")
+        return response
+    except Exception as e:
+        logger.error(f"Request {request_id} failed with error: {str(e)}")
+        import traceback
+        logger.error(traceback.format_exc())
+        return JSONResponse(
+            status_code=500,
+            content={"detail": "Internal server error", "error": str(e)}
+        )
+
 # Health check endpoint
 @app.get("/api/health")
 async def health_check():
-    """Health check endpoint"""
+    """Health check endpoint that tests Redis and database connectivity"""
     try:
+        # Test results
+        results = {
+            "status": "ok",
+            "timestamp": datetime.now().isoformat(),
+            "services": {},
+            "environment": {
+                "vercel": os.environ.get('VERCEL', '0') == '1' or os.path.exists('/.vercel'),
+                "python_version": f"{os.sys.version_info.major}.{os.sys.version_info.minor}.{os.sys.version_info.micro}"
+            }
+        }
+        
         # Check Redis connection
-        from backend.services.redis_service import ensure_redis_initialized
-        redis_status = await ensure_redis_initialized()
+        try:
+            from backend.services.redis_service import test_redis_connection
+            redis_status = await test_redis_connection()
+            results["services"]["redis"] = "connected" if redis_status else "disconnected"
+        except Exception as e:
+            logger.error(f"Redis health check failed: {e}")
+            results["services"]["redis"] = f"error: {str(e)}"
         
         # Check database
-        from backend.db.routine_tracker import check_db_connection
-        db_status = check_db_connection()
+        try:
+            from backend.db.routine_tracker import check_db_connection
+            db_status = check_db_connection()
+            results["services"]["database"] = "connected" if db_status else "disconnected"
+        except Exception as e:
+            logger.error(f"Database health check failed: {e}")
+            results["services"]["database"] = f"error: {str(e)}"
         
-        return JSONResponse({
-            "status": "ok" if redis_status and db_status else "degraded",
-            "timestamp": datetime.now().isoformat(),
-            "services": {
-                "redis": "connected" if redis_status else "disconnected",
-                "database": "connected" if db_status else "disconnected"
-            }
-        })
+        # Check workflow
+        try:
+            from backend.workflow.workflow import get_workflow
+            workflow = await get_workflow()
+            results["services"]["workflow"] = "initialized" if workflow else "uninitialized"
+        except Exception as e:
+            logger.error(f"Workflow health check failed: {e}")
+            results["services"]["workflow"] = f"error: {str(e)}"
+        
+        # Update overall status
+        if any(status.startswith("error") for status in results["services"].values()):
+            results["status"] = "error"
+        elif any(status == "disconnected" for status in results["services"].values()):
+            results["status"] = "degraded"
+        
+        return JSONResponse(results)
     except Exception as e:
         logger.error(f"Health check failed: {str(e)}")
+        import traceback
+        logger.error(traceback.format_exc())
         return JSONResponse({
             "status": "error",
             "timestamp": datetime.now().isoformat(),
@@ -91,51 +142,56 @@ app.mount("/", StaticFiles(directory=str(FRONTEND_DIR), html=True), name="fronte
 @app.on_event("startup")
 async def startup_event():
     """Initialize services on startup"""
-    # Import Redis service
+    # Import Redis service - without maintaining connections
     try:
-        from backend.services.redis_service import initialize_redis, test_redis_connection
-        
-        # Initialize Redis
-        await initialize_redis()
-        
-        # Test Redis connection
+        from backend.services.redis_service import test_redis_connection
+        logger.info("Testing Redis connection...")
         redis_ok = await test_redis_connection()
-        if not redis_ok:
-            logger.warning("Redis connection test failed - some features may not work properly")
+        if redis_ok:
+            logger.info("✅ Redis connection test passed")
         else:
-            logger.info("Redis initialized successfully")
+            logger.warning("⚠️ Redis connection test failed - some features may not work properly")
     except Exception as e:
-        logger.error(f"Redis initialization error: {e}")
-        logger.warning("Redis initialization failed - some features may not work properly")
+        logger.error(f"❌ Redis initialization error: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
     
-    # Initialize database
+    # Initialize database - without maintaining connections
     try:
         from backend.db.routine_tracker import init_db, check_db_connection
         
         # Initialize database
+        logger.info("Initializing database...")
         db_success = init_db()
-        if not db_success:
-            logger.warning("Database initialization failed - some features may not work properly")
+        if db_success:
+            logger.info("✅ Database initialized successfully")
         else:
-            logger.info("Database initialized successfully")
+            logger.warning("⚠️ Database initialization failed - some features may not work properly")
             
         # Test database connection
-        if check_db_connection():
-            logger.info("Database connection verified")
+        db_connection = check_db_connection()
+        if db_connection:
+            logger.info("✅ Database connection verified")
         else:
-            logger.warning("Database connection check failed - routine tracking may not work properly")
+            logger.warning("⚠️ Database connection check failed - routine tracking may not work properly")
     except Exception as e:
-        logger.error(f"Database initialization error: {e}")
-        logger.warning("Database initialization failed - routine tracking may not work properly")
+        logger.error(f"❌ Database initialization error: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
         
     # Initialize workflow
     try:
         from backend.workflow.workflow import get_workflow
+        logger.info("Initializing workflow...")
         workflow = await get_workflow()
         if workflow:
-            logger.info("Workflow initialized successfully")
+            logger.info("✅ Workflow initialized successfully")
         else:
-            logger.warning("Workflow initialization failed - chat features may not work properly")
+            logger.warning("⚠️ Workflow initialization failed - chat features may not work properly")
     except Exception as e:
-        logger.error(f"Workflow initialization error: {e}")
-        logger.warning("Workflow initialization failed - chat features may not work properly") 
+        logger.error(f"❌ Workflow initialization error: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
+        
+    # Log startup complete
+    logger.info("✅ Application startup complete") 

@@ -1,7 +1,8 @@
 """
 Babywise Chatbot - Redis Service
 
-This module provides Redis connection and operations for the Babywise Chatbot.
+This module provides Redis connection and operations for the Babywise Chatbot,
+optimized for serverless environments.
 """
 
 import os
@@ -31,7 +32,6 @@ logger = logging.getLogger(__name__)
 
 # Redis connection configuration
 REDIS_URL = os.environ.get("STORAGE_URL", "redis://***:***@redis-10101.c135.eu-central-1-1.ec2.redns.redis-cloud.com:10101")
-_redis_pool = None
 
 # In-memory fallback cache when Redis is unavailable
 _memory_cache = {}
@@ -47,86 +47,6 @@ class MessageJSONEncoder(json.JSONEncoder):
         elif isinstance(obj, datetime):
             return obj.isoformat()
         return super().default(obj)
-
-async def initialize_redis() -> None:
-    """Initialize the Redis connection pool with proper error handling."""
-    global _redis_pool
-    try:
-        if _redis_pool is None:
-            logger.info("Initializing Redis connection pool...")
-            
-            # Get Redis URL from environment or use default
-            redis_url = os.environ.get("STORAGE_URL", REDIS_URL)
-            if not redis_url:
-                logger.error("Redis URL not configured")
-                return
-                
-            # Create a masked URL for logging (hide credentials)
-            masked_url = redis_url.replace(redis_url.split('@')[0] if '@' in redis_url else redis_url, '***:***@')
-            logger.info(f"Connecting to Redis at {masked_url}")
-            
-            # Connect to Redis with modern from_url method (no loop parameter)
-            _redis_pool = await aioredis.from_url(
-                redis_url,
-                encoding="utf-8",
-                decode_responses=True,
-                socket_timeout=10.0,
-                socket_connect_timeout=5.0,
-                retry_on_timeout=True
-            )
-            
-            logger.info("Redis connection pool initialized successfully")
-    except Exception as e:
-        logger.error(f"Failed to initialize Redis connection pool: {e}")
-        _redis_pool = None
-
-async def get_redis() -> Optional[aioredis.Redis]:
-    """Get a Redis connection from the pool with proper error handling."""
-    global _redis_pool
-    try:
-        if _redis_pool is None:
-            await initialize_redis()
-        
-        if _redis_pool is not None:
-            try:
-                # Test the connection
-                await _redis_pool.ping()
-                return _redis_pool
-            except Exception as e:
-                logger.warning(f"Redis connection lost, reinitializing: {e}")
-                _redis_pool = None
-                await initialize_redis()
-                
-        return _redis_pool
-    except Exception as e:
-        logger.error(f"Error getting Redis connection: {e}")
-        return None
-
-async def close_redis() -> None:
-    """Close the Redis connection pool safely."""
-    global _redis_pool
-    if _redis_pool is not None:
-        try:
-            logger.info("Closing Redis connection pool...")
-            _redis_pool.close()
-            await _redis_pool.wait_closed()
-        except Exception as e:
-            logger.error(f"Error closing Redis connection pool: {e}")
-        finally:
-            _redis_pool = None
-            logger.info("Redis connection pool closed")
-
-async def test_redis_connection() -> bool:
-    """Test the Redis connection."""
-    try:
-        redis = await get_redis()
-        if redis is None:
-            return False
-        await redis.ping()
-        return True
-    except Exception as e:
-        logger.error(f"Redis connection test failed: {e}")
-        return False
 
 # Cache key prefixes
 class RedisKeyPrefix(str, Enum):
@@ -144,21 +64,127 @@ RECENT_EVENTS_EXPIRATION = 1800  # 30 minutes
 ACTIVE_ROUTINE_EXPIRATION = 7200  # 2 hours
 THREAD_STATE_EXPIRATION = 86400  # 24 hours
 
-# Helper function to get a key with memory cache fallback
+# Per-request connection tracking (to avoid event loop conflicts)
+_connection_cache = {}
+
+async def get_redis() -> Optional[aioredis.Redis]:
+    """
+    Get a Redis connection appropriate for the current request.
+    
+    This function creates a fresh connection for each request context,
+    which is safer in a serverless environment where event loops may differ.
+    """
+    try:
+        # Get Redis URL from environment or use default
+        redis_url = os.environ.get("STORAGE_URL", REDIS_URL)
+        if not redis_url:
+            logger.error("Redis URL not configured")
+            return None
+            
+        # Connect to Redis with modern from_url method
+        client = await aioredis.from_url(
+            redis_url,
+            encoding="utf-8",
+            decode_responses=True,
+            socket_timeout=5.0,  # Shorter timeout for serverless environment
+            socket_connect_timeout=3.0,
+            retry_on_timeout=True
+        )
+        
+        try:
+            # Validate connection
+            await client.ping()
+            return client
+        except Exception as e:
+            logger.error(f"Redis ping failed: {e}")
+            try:
+                # Ensure proper cleanup of failed connection
+                client.close()
+                await client.wait_closed()
+            except Exception:
+                pass
+            return None
+            
+    except Exception as e:
+        logger.error(f"Error connecting to Redis: {e}")
+        return None
+
+async def initialize_redis() -> bool:
+    """
+    Test Redis connection and verify it works.
+    
+    For serverless environments, this does not maintain a connection pool
+    but simply tests that we can connect.
+    """
+    try:
+        # Test a connection
+        client = await get_redis()
+        if client is None:
+            return False
+            
+        # Success - clean up immediately
+        try:
+            client.close()
+            await client.wait_closed()
+        except Exception as e:
+            logger.warning(f"Error closing Redis connection: {e}")
+            
+        return True
+    except Exception as e:
+        logger.error(f"Redis initialization failed: {e}")
+        return False
+
+async def test_redis_connection() -> bool:
+    """Test the Redis connection."""
+    try:
+        client = await get_redis()
+        if client is None:
+            return False
+            
+        # Test connection
+        await client.ping()
+        
+        # Clean up immediately
+        try:
+            client.close()
+            await client.wait_closed()
+        except Exception as e:
+            logger.warning(f"Error closing Redis connection: {e}")
+            
+        return True
+    except Exception as e:
+        logger.error(f"Redis connection test failed: {e}")
+        return False
+
+async def ensure_redis_initialized() -> bool:
+    """Ensure Redis is initialized and working."""
+    return await test_redis_connection()
+
+# Helper function to get a value from Redis with memory fallback
 async def get_with_fallback(key: str) -> Optional[Any]:
     """Get a value from Redis with fallback to memory cache."""
     # Try Redis first
-    redis = await get_redis()
-    if redis:
-        try:
-            value = await redis.get(key)
+    client = None
+    try:
+        client = await get_redis()
+        if client:
+            value = await client.get(key)
             if value:
                 try:
-                    return json.loads(value)
+                    result = json.loads(value)
+                    return result
                 except json.JSONDecodeError:
                     return value
-        except Exception as e:
-            logger.warning(f"Error getting {key} from Redis: {e}")
+    except Exception as e:
+        logger.warning(f"Error getting {key} from Redis: {e}")
+    finally:
+        # Always clean up the connection
+        if client:
+            try:
+                client.close()
+                await client.wait_closed()
+            except Exception:
+                pass
     
     # Fall back to memory cache
     if key in _memory_cache:
@@ -167,7 +193,7 @@ async def get_with_fallback(key: str) -> Optional[Any]:
     
     return None
 
-# Helper function to set a key with memory cache fallback
+# Helper function to set a value in Redis with memory fallback
 async def set_with_fallback(key: str, value: Any, expiration: int = THREAD_STATE_EXPIRATION) -> bool:
     """Set a value in Redis with fallback to memory cache."""
     # Convert value to JSON if it's not a string
@@ -179,13 +205,25 @@ async def set_with_fallback(key: str, value: Any, expiration: int = THREAD_STATE
             return False
     
     # Try Redis first
-    redis = await get_redis()
-    if redis:
-        try:
-            await redis.set(key, value, ex=expiration)
-            return True
-        except Exception as e:
-            logger.warning(f"Error setting {key} in Redis: {e}")
+    client = None
+    try:
+        client = await get_redis()
+        if client:
+            await client.set(key, value, ex=expiration)
+            result = True
+        else:
+            result = False
+    except Exception as e:
+        logger.warning(f"Error setting {key} in Redis: {e}")
+        result = False
+    finally:
+        # Always clean up the connection
+        if client:
+            try:
+                client.close()
+                await client.wait_closed()
+            except Exception:
+                pass
     
     # Fall back to memory cache
     try:
@@ -200,8 +238,33 @@ async def set_with_fallback(key: str, value: Any, expiration: int = THREAD_STATE
         return True
     except Exception as e:
         logger.error(f"Error setting {key} in memory cache: {e}")
-        return False
+        return result  # Return Redis result if memory cache fails
 
+async def delete_with_fallback(key: str) -> bool:
+    """Delete a value from Redis with memory fallback cleanup."""
+    client = None
+    try:
+        client = await get_redis()
+        if client:
+            await client.delete(key)
+    except Exception as e:
+        logger.warning(f"Error deleting {key} from Redis: {e}")
+    finally:
+        # Always clean up the connection
+        if client:
+            try:
+                client.close()
+                await client.wait_closed()
+            except Exception:
+                pass
+    
+    # Also clean from memory cache
+    if key in _memory_cache:
+        del _memory_cache[key]
+    
+    return True
+
+# Thread state functions
 async def get_thread_state(thread_id: str) -> Optional[Dict[str, Any]]:
     """Get the state for a thread."""
     key = f"{RedisKeyPrefix.THREAD_STATE}:{thread_id}"
@@ -215,17 +278,7 @@ async def save_thread_state(thread_id: str, state: Dict[str, Any]) -> bool:
 async def delete_thread_state(thread_id: str) -> bool:
     """Delete the state for a thread."""
     key = f"{RedisKeyPrefix.THREAD_STATE}:{thread_id}"
-    redis = await get_redis()
-    if redis:
-        try:
-            await redis.delete(key)
-        except Exception as e:
-            logger.warning(f"Error deleting {key} from Redis: {e}")
-    
-    if key in _memory_cache:
-        del _memory_cache[key]
-    
-    return True
+    return await delete_with_fallback(key)
 
 # Routine summary cache functions
 async def cache_routine_summary(thread_id: str, routine_type: str, summary: Dict[str, Any]) -> bool:
@@ -238,6 +291,7 @@ async def get_cached_routine_summary(thread_id: str, routine_type: str) -> Optio
     key = f"{RedisKeyPrefix.ROUTINE_SUMMARY}:{thread_id}:{routine_type}"
     return await get_with_fallback(key)
 
+# Recent events functions
 async def cache_recent_events(thread_id: str, routine_type: str, events: List[Dict[str, Any]]) -> bool:
     """Cache recent events."""
     key = f"{RedisKeyPrefix.RECENT_EVENTS}:{thread_id}:{routine_type}"
@@ -248,6 +302,7 @@ async def get_cached_recent_events(thread_id: str, routine_type: str) -> Optiona
     key = f"{RedisKeyPrefix.RECENT_EVENTS}:{thread_id}:{routine_type}"
     return await get_with_fallback(key)
 
+# Active routine functions
 async def cache_active_routine(thread_id: str, routine_type: str, routine_data: Dict[str, Any]) -> bool:
     """Cache an active routine."""
     key = f"{RedisKeyPrefix.ACTIVE_ROUTINE}:{thread_id}:{routine_type}"
@@ -261,23 +316,10 @@ async def get_active_routine(thread_id: str, routine_type: str) -> Optional[Dict
 async def invalidate_routine_cache(thread_id: str, routine_type: str) -> bool:
     """Invalidate routine caches for a thread and routine type."""
     try:
-        redis = await get_redis()
-        if redis is None:
-            # Just clear memory cache
-            for prefix in [RedisKeyPrefix.ROUTINE_SUMMARY, RedisKeyPrefix.RECENT_EVENTS, RedisKeyPrefix.ACTIVE_ROUTINE]:
-                key = f"{prefix}:{thread_id}:{routine_type}"
-                if key in _memory_cache:
-                    del _memory_cache[key]
-            return True
-            
         # Delete all cache keys for this thread and routine type
         for prefix in [RedisKeyPrefix.ROUTINE_SUMMARY, RedisKeyPrefix.RECENT_EVENTS, RedisKeyPrefix.ACTIVE_ROUTINE]:
             key = f"{prefix}:{thread_id}:{routine_type}"
-            await redis.delete(key)
-            
-            # Also clear from memory cache
-            if key in _memory_cache:
-                del _memory_cache[key]
+            await delete_with_fallback(key)
                 
         logger.info(f"Invalidated routine cache for thread {thread_id}, type {routine_type}")
         return True
@@ -287,18 +329,20 @@ async def invalidate_routine_cache(thread_id: str, routine_type: str) -> bool:
 
 async def get_thread_events(thread_id: str) -> List[Dict[str, Any]]:
     """Get all events for a thread."""
+    client = None
     try:
-        redis = await get_redis()
-        if redis is None:
+        client = await get_redis()
+        if client is None:
+            logger.error("Failed to get Redis connection for retrieving thread events")
             return []
             
         events = []
         # Get list of event keys for this thread
         thread_events_key = f"{RedisKeyPrefix.THREAD_EVENTS}:{thread_id}"
-        event_keys = await redis.lrange(thread_events_key, 0, -1)
+        event_keys = await client.lrange(thread_events_key, 0, -1)
         
         for event_key in event_keys:
-            event_json = await redis.get(event_key)
+            event_json = await client.get(event_key)
             if event_json:
                 try:
                     event = json.loads(event_json)
@@ -309,4 +353,49 @@ async def get_thread_events(thread_id: str) -> List[Dict[str, Any]]:
         return events
     except Exception as e:
         logger.error(f"Error getting thread events: {e}")
-        return [] 
+        return []
+    finally:
+        # Always clean up the connection
+        if client:
+            try:
+                client.close()
+                await client.wait_closed()
+            except Exception:
+                pass
+
+# Helper function to execute a Redis list command with cleanup
+async def execute_list_command(key: str, command: str, *args) -> bool:
+    """Execute a Redis list command with proper connection cleanup."""
+    client = None
+    try:
+        client = await get_redis()
+        if client is None:
+            return False
+            
+        # Execute the requested list command
+        if command == 'rpush':
+            await client.rpush(key, *args)
+        elif command == 'lpush':
+            await client.lpush(key, *args)
+        else:
+            logger.error(f"Unsupported list command: {command}")
+            return False
+            
+        return True
+    except Exception as e:
+        logger.error(f"Error executing {command} on {key}: {e}")
+        return False
+    finally:
+        # Always clean up the connection
+        if client:
+            try:
+                client.close()
+                await client.wait_closed()
+            except Exception:
+                pass
+
+# Add event to a thread's event list
+async def add_event_to_thread(thread_id: str, event_key: str) -> bool:
+    """Add an event key to a thread's event list."""
+    thread_events_key = f"{RedisKeyPrefix.THREAD_EVENTS}:{thread_id}"
+    return await execute_list_command(thread_events_key, 'rpush', event_key) 
