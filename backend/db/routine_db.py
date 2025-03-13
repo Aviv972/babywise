@@ -331,11 +331,24 @@ async def get_summary(thread_id: str, period: str = "day", force_refresh: bool =
             logger.info(f"Force refreshing summary for thread {thread_id}")
             # Force clear any existing cache
             await delete_with_fallback(cache_key)
+            logger.info(f"Cleared cache for key: {cache_key}")
         else:
+            logger.info(f"Checking for cached summary with key: {cache_key}")
             cached_summary = await get_with_fallback(cache_key)
             if cached_summary:
-                logger.info(f"Using cached summary for thread {thread_id}, period {period}")
-                return cached_summary
+                logger.info(f"Found cached summary for thread {thread_id}, period {period}")
+                # Validate the cached summary structure
+                if "routines" in cached_summary:
+                    sleep_data = cached_summary.get("routines", {}).get("sleep", {})
+                    feed_data = cached_summary.get("routines", {}).get("feeding", {})
+                    logger.info(f"Cached summary has {sleep_data.get('total_events', 0)} sleep events and {feed_data.get('total_events', 0)} feeding events")
+                    # Return the valid cached summary
+                    return cached_summary
+                else:
+                    logger.warning(f"Cached summary missing expected structure, forcing refresh")
+                    await delete_with_fallback(cache_key)
+            else:
+                logger.info(f"No cached summary found for key: {cache_key}")
         
         # Get events for the period
         logger.info(f"Retrieving events for thread {thread_id} from {start_date.isoformat()} to {now.isoformat()}")
@@ -657,8 +670,16 @@ async def get_summary(thread_id: str, period: str = "day", force_refresh: bool =
             }
         }
         
-        # Cache the summary
-        await set_with_fallback(cache_key, summary, 300)  # Cache for 5 minutes
+        # Cache the summary with proper serialization
+        logger.info(f"Caching summary for thread {thread_id} with key: {cache_key}")
+        try:
+            # Convert datetime objects to strings for proper serialization
+            serializable_summary = json.loads(json.dumps(summary, default=str))
+            await set_with_fallback(cache_key, serializable_summary, 300)  # Cache for 5 minutes
+            logger.info(f"Successfully cached summary for thread {thread_id}")
+        except Exception as e:
+            logger.error(f"Error caching summary: {str(e)}")
+            # Continue without caching
         
         logger.info(f"Generated summary for thread {thread_id} with {len(sleep_periods)} sleep periods and {len(feed_events)} feedings")
         return summary

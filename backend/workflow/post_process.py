@@ -490,16 +490,44 @@ async def process_summary_command(command: Dict[str, Any], thread_id: str, langu
         A formatted summary response
     """
     period = command.get('period', 'day')
+    logger.info(f"Processing summary command for thread {thread_id}, period: {period}, language: {language}")
     
     try:
         # Generate summary - make sure to await the coroutine
+        logger.info(f"Calling generate_summary for thread {thread_id}")
         summary = await generate_summary(thread_id, None, period)
+        
+        # Log summary structure
+        try:
+            summary_str = json.dumps(summary, default=str)
+            logger.info(f"Raw summary data (truncated): {summary_str[:500]}...")
+            
+            # Log key summary elements
+            if "routines" in summary:
+                sleep_count = summary.get("routines", {}).get("sleep", {}).get("total_events", 0)
+                feed_count = summary.get("routines", {}).get("feeding", {}).get("total_events", 0)
+                logger.info(f"Summary contains {sleep_count} sleep events and {feed_count} feeding events")
+                
+                # Check for latest events
+                has_latest_sleep = "latest_event" in summary.get("routines", {}).get("sleep", {})
+                has_latest_feed = "latest_event" in summary.get("routines", {}).get("feeding", {})
+                logger.info(f"Latest sleep event present: {has_latest_sleep}, Latest feeding event present: {has_latest_feed}")
+            else:
+                logger.warning(f"Summary is missing 'routines' key: {summary_str[:100]}...")
+        except Exception as e:
+            logger.error(f"Error logging summary details: {str(e)}")
         
         # Add language to summary for formatting
         summary["language"] = language
         
         # Format the summary into a readable response
-        return format_summary_response(summary)
+        logger.info(f"Calling format_summary_response")
+        formatted_response = format_summary_response(summary)
+        
+        # Log the formatted response
+        logger.info(f"Formatted summary response (truncated): {formatted_response[:200]}...")
+        
+        return formatted_response
     except Exception as e:
         logger.error(f"Error processing summary command: {str(e)}", exc_info=True)
         if language == "he":

@@ -1020,6 +1020,7 @@ async def _get_summary(thread_id: str, period: str = "day", force_refresh: bool 
             
             # Use asyncio.wait_for to enforce a timeout
             try:
+                logger.info(f"Calling routine_db.get_summary for thread {thread_id}")
                 summary = await asyncio.wait_for(
                     routine_db.get_summary(thread_id, period, force_refresh),
                     timeout=summary_timeout
@@ -1028,8 +1029,27 @@ async def _get_summary(thread_id: str, period: str = "day", force_refresh: bool 
                 execution_time = (datetime.now() - start_time).total_seconds()
                 logger.info(f"Generated summary for thread {thread_id} in {execution_time:.2f}s")
                 
+                # Log the summary for debugging
+                summary_str = json.dumps(summary, default=str)
+                logger.info(f"Summary result (truncated): {summary_str[:500]}...")
+                
                 if summary:
+                    # Ensure the structure is correct
+                    if "routines" not in summary:
+                        logger.warning(f"Summary missing routines key, adding empty structure")
+                        summary["routines"] = empty_summary["routines"]
+                    
+                    # Ensure sleep and feeding structures exist
+                    if "sleep" not in summary["routines"]:
+                        logger.warning(f"Summary missing sleep data, adding empty structure")
+                        summary["routines"]["sleep"] = empty_summary["routines"]["sleep"]
+                        
+                    if "feeding" not in summary["routines"]:
+                        logger.warning(f"Summary missing feeding data, adding empty structure")
+                        summary["routines"]["feeding"] = empty_summary["routines"]["feeding"]
+                        
                     return summary
+                    
             except asyncio.TimeoutError:
                 logger.error(f"Summary generation timed out after {summary_timeout}s for thread {thread_id}")
                 return {
@@ -1057,7 +1077,20 @@ async def _get_summary(thread_id: str, period: str = "day", force_refresh: bool 
             "period": period,
             "error": str(e),
             "thread_id": thread_id,
-            "routines": {}
+            "routines": {
+                "sleep": {
+                    "total_events": 0,
+                    "total_duration": 0,
+                    "average_duration": 0,
+                    "latest_event": None,
+                    "events": []
+                },
+                "feeding": {
+                    "total_events": 0,
+                    "latest_event": None,
+                    "events": []
+                }
+            }
         }
 
 @app.get("/api/routines/summary/{thread_id}")
@@ -1303,3 +1336,65 @@ async def diagnostics():
             "error": str(e),
             "traceback": traceback.format_exc().split("\n")
         }, status_code=500)
+
+def get_workflow():
+    """Get or create the workflow for processing messages"""
+    try:
+        from backend.workflow.workflow import create_workflow
+        logger.info("Creating workflow using imported create_workflow function")
+        return create_workflow()
+    except Exception as e:
+        logger.error(f"Error creating workflow: {str(e)}")
+        
+        # Fallback to a simple workflow if the import fails
+        try:
+            from backend.workflow.workflow import WorkflowInvoker
+            from backend.workflow.extract_context import extract_context
+            from backend.workflow.select_domain import select_domain
+            from backend.workflow.generate_response import generate_response
+            from backend.workflow.post_process import post_process
+            
+            logger.info("Creating fallback workflow")
+            
+            # Create a simple sequential workflow
+            async def simple_workflow(state):
+                try:
+                    # Extract context
+                    state = await extract_context(state)
+                    
+                    # Select domain
+                    state = await select_domain(state)
+                    
+                    # Generate response
+                    state = await generate_response(state)
+                    
+                    # Post-process
+                    state = await post_process(state)
+                    
+                    return state
+                except Exception as workflow_error:
+                    logger.error(f"Error in simple workflow: {str(workflow_error)}")
+                    
+                    # Return the original state with an error message
+                    if "messages" not in state:
+                        state["messages"] = []
+                    
+                    from backend.models.message_types import AIMessage
+                    state["messages"].append(AIMessage(content="I apologize, but I encountered an error while processing your message. Please try again."))
+                    return state
+            
+            return WorkflowInvoker(simple_workflow)
+        except Exception as fallback_error:
+            logger.error(f"Failed to create fallback workflow: {str(fallback_error)}")
+            
+            # Return an extremely simple workflow as last resort
+            class EmergencyWorkflow:
+                async def invoke(self, state):
+                    if "messages" not in state:
+                        state["messages"] = []
+                    
+                    from langchain_core.messages import AIMessage
+                    state["messages"].append(AIMessage(content="I'm sorry, but I'm having trouble processing messages right now. Our team is working on a fix."))
+                    return state
+            
+            return EmergencyWorkflow()

@@ -449,32 +449,47 @@ def format_summary_response(summary: Dict[str, Any]) -> str:
             latest_event = sleep_data.get("latest_event")
             if latest_event:
                 response += "\nמפגש שינה אחרון:\n"
-                start_time_str = latest_event["start_time"]
+                
+                # Handle newer format where we have 'start' and 'end' keys
+                start_key = "start" if "start" in latest_event else "start_time"
+                start_time_str = latest_event.get(start_key)
+                
+                if not start_time_str:
+                    # Fallback for older format
+                    start_time_str = latest_event.get("event_time", "")
+                
                 if isinstance(start_time_str, str):
                     try:
-                        start_time = datetime.fromisoformat(start_time_str).strftime("%I:%M %p")
+                        start_time = datetime.fromisoformat(start_time_str.replace("Z", "+00:00")).strftime("%I:%M %p")
                     except ValueError:
                         # Handle potential format issues
                         start_time = start_time_str
                 else:
                     start_time = start_time_str.strftime("%I:%M %p")
                 
-                end_time_str = latest_event.get("end_time")
+                # Handle newer format where we have 'end' key
+                end_key = "end" if "end" in latest_event else "end_time"
+                end_time_str = latest_event.get(end_key)
+                
                 if end_time_str:
                     if isinstance(end_time_str, str):
                         try:
-                            end_time = datetime.fromisoformat(end_time_str).strftime("%I:%M %p")
+                            end_time = datetime.fromisoformat(end_time_str.replace("Z", "+00:00")).strftime("%I:%M %p")
                         except ValueError:
                             # Handle potential format issues
                             end_time = end_time_str
                     else:
                         end_time = end_time_str.strftime("%I:%M %p")
                     
-                    # Calculate duration
-                    if isinstance(start_time_str, str) and isinstance(end_time_str, str):
+                    # Calculate duration - Use duration field directly if available
+                    if "duration" in latest_event:
+                        # Duration is stored in hours in the summary
+                        duration_hours = latest_event["duration"]
+                        duration_mins = duration_hours * 60
+                    elif isinstance(start_time_str, str) and isinstance(end_time_str, str):
                         try:
-                            start_dt = datetime.fromisoformat(start_time_str)
-                            end_dt = datetime.fromisoformat(end_time_str)
+                            start_dt = datetime.fromisoformat(start_time_str.replace("Z", "+00:00"))
+                            end_dt = datetime.fromisoformat(end_time_str.replace("Z", "+00:00"))
                             duration_mins = (end_dt - start_dt).total_seconds() / 60
                         except ValueError:
                             # If parsing fails, use the total duration from summary
@@ -492,7 +507,11 @@ def format_summary_response(summary: Dict[str, Any]) -> str:
                         duration = f"{mins}ד"
                     response += f"- {start_time} עד {end_time} ({duration})\n"
                 else:
-                    response += f"- התחיל ב-{start_time} (ממשיך)\n"
+                    # Handle ongoing events
+                    if latest_event.get("is_ongoing", False):
+                        response += f"- התחיל ב-{start_time} (ממשיך)\n"
+                    else:
+                        response += f"- התחיל ב-{start_time}\n"
         else:
             response += "- לא נרשמו מפגשי שינה לתקופה זו.\n"
         
@@ -502,44 +521,62 @@ def format_summary_response(summary: Dict[str, Any]) -> str:
             response += f"- סך הכל מפגשי האכלה: {feed_count}\n"
             if feed_total > 0:
                 hours, minutes = divmod(int(feed_total), 60)
-                if hours > 0:
-                    response += f"- זמן האכלה כולל: {hours}ש {minutes}ד\n"
-                else:
-                    response += f"- זמן האכלה כולל: {minutes}ד\n"
+                response += f"- זמן האכלה כולל: {hours}ש {minutes}ד\n"
             if feed_avg > 0:
-                avg_minutes = int(feed_avg)
-                response += f"- משך האכלה ממוצע: {avg_minutes}ד\n"
+                avg_hours, avg_minutes = divmod(int(feed_avg), 60)
+                if avg_hours > 0:
+                    response += f"- משך האכלה ממוצע: {avg_hours}ש {avg_minutes}ד\n"
+                else:
+                    response += f"- משך האכלה ממוצע: {avg_minutes}ד\n"
             
             # Show latest feed event if available
             latest_event = feed_data.get("latest_event")
             if latest_event:
                 response += "\nמפגש האכלה אחרון:\n"
-                start_time_str = latest_event["start_time"]
+                
+                # Handle newer format where we have 'start' and 'end' keys
+                start_key = "start" if "start" in latest_event else "start_time"
+                start_time_str = latest_event.get(start_key)
+                
+                if not start_time_str:
+                    # Fallback for older format
+                    start_time_str = latest_event.get("event_time", "")
+                
                 if isinstance(start_time_str, str):
                     try:
-                        start_time = datetime.fromisoformat(start_time_str).strftime("%I:%M %p")
+                        start_time = datetime.fromisoformat(start_time_str.replace("Z", "+00:00")).strftime("%I:%M %p")
                     except ValueError:
+                        # Handle potential format issues
                         start_time = start_time_str
                 else:
                     start_time = start_time_str.strftime("%I:%M %p")
                 
-                end_time_str = latest_event.get("end_time")
+                # Handle newer format where we have 'end' key
+                end_key = "end" if "end" in latest_event else "end_time"
+                end_time_str = latest_event.get(end_key)
+                
                 if end_time_str:
                     if isinstance(end_time_str, str):
                         try:
-                            end_time = datetime.fromisoformat(end_time_str).strftime("%I:%M %p")
+                            end_time = datetime.fromisoformat(end_time_str.replace("Z", "+00:00")).strftime("%I:%M %p")
                         except ValueError:
+                            # Handle potential format issues
                             end_time = end_time_str
                     else:
                         end_time = end_time_str.strftime("%I:%M %p")
                     
-                    # Calculate duration
-                    if isinstance(start_time_str, str) and isinstance(end_time_str, str):
+                    # Calculate duration - Use duration field directly if available
+                    if "duration" in latest_event:
+                        # Duration is stored in hours in the summary
+                        duration_hours = latest_event["duration"]
+                        duration_mins = duration_hours * 60
+                    elif isinstance(start_time_str, str) and isinstance(end_time_str, str):
                         try:
-                            start_dt = datetime.fromisoformat(start_time_str)
-                            end_dt = datetime.fromisoformat(end_time_str)
+                            start_dt = datetime.fromisoformat(start_time_str.replace("Z", "+00:00"))
+                            end_dt = datetime.fromisoformat(end_time_str.replace("Z", "+00:00"))
                             duration_mins = (end_dt - start_dt).total_seconds() / 60
                         except ValueError:
+                            # If parsing fails, use the total duration from summary
                             duration_mins = feed_total
                     else:
                         if isinstance(start_time_str, datetime) and isinstance(end_time_str, datetime):
@@ -554,7 +591,11 @@ def format_summary_response(summary: Dict[str, Any]) -> str:
                         duration = f"{mins}ד"
                     response += f"- {start_time} עד {end_time} ({duration})\n"
                 else:
-                    response += f"- התחיל ב-{start_time} (ממשיך)\n"
+                    # Handle ongoing events
+                    if latest_event.get("is_ongoing", False):
+                        response += f"- התחיל ב-{start_time} (ממשיך)\n"
+                    else:
+                        response += f"- התחיל ב-{start_time}\n"
         else:
             response += "- לא נרשמו מפגשי האכלה לתקופה זו.\n"
     else:
@@ -578,32 +619,50 @@ def format_summary_response(summary: Dict[str, Any]) -> str:
             latest_event = sleep_data.get("latest_event")
             if latest_event:
                 response += "\nLatest sleep session:\n"
-                start_time_str = latest_event["start_time"]
+                
+                # Handle newer format where we have 'start' and 'end' keys
+                start_key = "start" if "start" in latest_event else "start_time"
+                start_time_str = latest_event.get(start_key)
+                
+                if not start_time_str:
+                    # Fallback for older format
+                    start_time_str = latest_event.get("event_time", "")
+                
                 if isinstance(start_time_str, str):
                     try:
-                        start_time = datetime.fromisoformat(start_time_str).strftime("%I:%M %p")
+                        start_time = datetime.fromisoformat(start_time_str.replace("Z", "+00:00")).strftime("%I:%M %p")
                     except ValueError:
+                        # Handle potential format issues
                         start_time = start_time_str
                 else:
                     start_time = start_time_str.strftime("%I:%M %p")
                 
-                end_time_str = latest_event.get("end_time")
+                # Handle newer format where we have 'end' key
+                end_key = "end" if "end" in latest_event else "end_time"
+                end_time_str = latest_event.get(end_key)
+                
                 if end_time_str:
                     if isinstance(end_time_str, str):
                         try:
-                            end_time = datetime.fromisoformat(end_time_str).strftime("%I:%M %p")
+                            end_time = datetime.fromisoformat(end_time_str.replace("Z", "+00:00")).strftime("%I:%M %p")
                         except ValueError:
+                            # Handle potential format issues
                             end_time = end_time_str
                     else:
                         end_time = end_time_str.strftime("%I:%M %p")
                     
-                    # Calculate duration
-                    if isinstance(start_time_str, str) and isinstance(end_time_str, str):
+                    # Calculate duration - Use duration field directly if available
+                    if "duration" in latest_event:
+                        # Duration is stored in hours in the summary
+                        duration_hours = latest_event["duration"]
+                        duration_mins = duration_hours * 60
+                    elif isinstance(start_time_str, str) and isinstance(end_time_str, str):
                         try:
-                            start_dt = datetime.fromisoformat(start_time_str)
-                            end_dt = datetime.fromisoformat(end_time_str)
+                            start_dt = datetime.fromisoformat(start_time_str.replace("Z", "+00:00"))
+                            end_dt = datetime.fromisoformat(end_time_str.replace("Z", "+00:00"))
                             duration_mins = (end_dt - start_dt).total_seconds() / 60
                         except ValueError:
+                            # If parsing fails, use the total duration from summary
                             duration_mins = sleep_total
                     else:
                         if isinstance(start_time_str, datetime) and isinstance(end_time_str, datetime):
@@ -618,7 +677,11 @@ def format_summary_response(summary: Dict[str, Any]) -> str:
                         duration = f"{mins}m"
                     response += f"- {start_time} to {end_time} ({duration})\n"
                 else:
-                    response += f"- Started at {start_time} (ongoing)\n"
+                    # Handle ongoing events
+                    if latest_event.get("is_ongoing", False):
+                        response += f"- Started at {start_time} (ongoing)\n"
+                    else:
+                        response += f"- Started at {start_time}\n"
         else:
             response += "- No sleep sessions recorded for this period.\n"
         
@@ -640,32 +703,50 @@ def format_summary_response(summary: Dict[str, Any]) -> str:
             latest_event = feed_data.get("latest_event")
             if latest_event:
                 response += "\nLatest feeding session:\n"
-                start_time_str = latest_event["start_time"]
+                
+                # Handle newer format where we have 'start' and 'end' keys
+                start_key = "start" if "start" in latest_event else "start_time"
+                start_time_str = latest_event.get(start_key)
+                
+                if not start_time_str:
+                    # Fallback for older format
+                    start_time_str = latest_event.get("event_time", "")
+                
                 if isinstance(start_time_str, str):
                     try:
-                        start_time = datetime.fromisoformat(start_time_str).strftime("%I:%M %p")
+                        start_time = datetime.fromisoformat(start_time_str.replace("Z", "+00:00")).strftime("%I:%M %p")
                     except ValueError:
+                        # Handle potential format issues
                         start_time = start_time_str
                 else:
                     start_time = start_time_str.strftime("%I:%M %p")
                 
-                end_time_str = latest_event.get("end_time")
+                # Handle newer format where we have 'end' key
+                end_key = "end" if "end" in latest_event else "end_time"
+                end_time_str = latest_event.get(end_key)
+                
                 if end_time_str:
                     if isinstance(end_time_str, str):
                         try:
-                            end_time = datetime.fromisoformat(end_time_str).strftime("%I:%M %p")
+                            end_time = datetime.fromisoformat(end_time_str.replace("Z", "+00:00")).strftime("%I:%M %p")
                         except ValueError:
+                            # Handle potential format issues
                             end_time = end_time_str
                     else:
                         end_time = end_time_str.strftime("%I:%M %p")
                     
-                    # Calculate duration
-                    if isinstance(start_time_str, str) and isinstance(end_time_str, str):
+                    # Calculate duration - Use duration field directly if available
+                    if "duration" in latest_event:
+                        # Duration is stored in hours in the summary
+                        duration_hours = latest_event["duration"]
+                        duration_mins = duration_hours * 60
+                    elif isinstance(start_time_str, str) and isinstance(end_time_str, str):
                         try:
-                            start_dt = datetime.fromisoformat(start_time_str)
-                            end_dt = datetime.fromisoformat(end_time_str)
+                            start_dt = datetime.fromisoformat(start_time_str.replace("Z", "+00:00"))
+                            end_dt = datetime.fromisoformat(end_time_str.replace("Z", "+00:00"))
                             duration_mins = (end_dt - start_dt).total_seconds() / 60
                         except ValueError:
+                            # If parsing fails, use the total duration from summary
                             duration_mins = feed_total
                     else:
                         if isinstance(start_time_str, datetime) and isinstance(end_time_str, datetime):
@@ -680,7 +761,11 @@ def format_summary_response(summary: Dict[str, Any]) -> str:
                         duration = f"{mins}m"
                     response += f"- {start_time} to {end_time} ({duration})\n"
                 else:
-                    response += f"- Started at {start_time} (ongoing)\n"
+                    # Handle ongoing events
+                    if latest_event.get("is_ongoing", False):
+                        response += f"- Started at {start_time} (ongoing)\n"
+                    else:
+                        response += f"- Started at {start_time}\n"
         else:
             response += "- No feeding sessions recorded for this period.\n"
     return response 
