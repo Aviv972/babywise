@@ -436,6 +436,10 @@ class ChatRequest(BaseModel):
     thread_id: Optional[str] = None
     language: Optional[str] = "en"
     local_event_id: Optional[str] = None
+    timezone: Optional[str] = None
+    context: Optional[Dict[str, Any]] = None
+    user_context: Optional[Dict[str, Any]] = None
+    reset_context: bool = False
 
 class ChatResponse(BaseModel):
     response: str

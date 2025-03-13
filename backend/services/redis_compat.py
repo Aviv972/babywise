@@ -284,14 +284,16 @@ async def with_retries(func, *args, max_retries=3, backoff_factor=0.5, **kwargs)
 @contextlib.asynccontextmanager
 async def redis_connection() -> AsyncGenerator[Optional[Any], None]:
     """
-    Create a Redis connection with enhanced error handling and automatic retries.
+    Context manager for Redis connections to ensure proper cleanup.
     
-    This context manager handles Redis connection lifecycle with proper error recovery.
-    It will try to establish a connection with retries, and ensure proper cleanup.
+    This creates a completely isolated connection for a single operation
+    and guarantees it will be properly closed regardless of success or failure.
     
     Usage:
         async with redis_connection() as client:
-            await client.get("my_key")
+            if client:
+                # Use redis connection here
+                await client.get("my_key")
     """
     client = None
     
@@ -299,16 +301,16 @@ async def redis_connection() -> AsyncGenerator[Optional[Any], None]:
         # Try to establish a connection with retries
         for attempt in range(3):
             try:
-                redis = Redis.from_url(
+                # Use the imported redis module instead of undefined Redis
+                client = await redis.from_url(
                     REDIS_URL,
                     encoding="utf-8",
                     decode_responses=True
                 )
                 
                 # Test the connection
-                await redis.ping()
+                await client.ping()
                 
-                client = redis
                 yield client
                 break
             except (ConnectionError, TimeoutError) as e:
@@ -325,8 +327,11 @@ async def redis_connection() -> AsyncGenerator[Optional[Any], None]:
     finally:
         # Ensure proper cleanup
         if client:
-            await client.close()
-            client = None
+            try:
+                await client.close()
+                client = None
+            except Exception as e:
+                logger.warning(f"Error closing Redis connection: {str(e)}")
 
 async def test_redis_connection() -> bool:
     """Test Redis connection with retries."""
