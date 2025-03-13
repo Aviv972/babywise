@@ -884,13 +884,17 @@ async def direct_get_latest_event(thread_id: str, event_type: str):
         })
 
 # Direct implementation of get_routine_summary
-async def _get_summary(thread_id: str, period: str = "day", force_refresh: bool = False) -> Dict[str, Any]:
+async def _get_summary(thread_id: str, period: str = "day", force_refresh: bool = True) -> Dict[str, Any]:
     """
-    Enhanced implementation of the get summary endpoint with isolated Redis operations.
+    Enhanced implementation of the get summary endpoint with isolated Redis operations and timeout handling.
     """
+    start_time = datetime.now()
     logger.info(f"Getting summary for thread: {thread_id}, period: {period}, force_refresh: {force_refresh}")
     
     try:
+        # Set up a timeout for the summary generation
+        summary_timeout = 25.0  # 25 seconds - vercel functions have 30s max
+
         # Calculate time range based on period
         now = datetime.now(timezone.utc)
         if period == "day":
@@ -935,11 +939,24 @@ async def _get_summary(thread_id: str, period: str = "day", force_refresh: bool 
         try:
             import backend.db.routine_db as routine_db
             
-            summary = await routine_db.get_summary(thread_id, period, force_refresh)
-            
-            if summary:
-                logger.info(f"Generated summary for thread {thread_id}")
-                return summary
+            # Use asyncio.wait_for to enforce a timeout
+            try:
+                summary = await asyncio.wait_for(
+                    routine_db.get_summary(thread_id, period, force_refresh),
+                    timeout=summary_timeout
+                )
+                
+                execution_time = (datetime.now() - start_time).total_seconds()
+                logger.info(f"Generated summary for thread {thread_id} in {execution_time:.2f}s")
+                
+                if summary:
+                    return summary
+            except asyncio.TimeoutError:
+                logger.error(f"Summary generation timed out after {summary_timeout}s for thread {thread_id}")
+                return {
+                    **empty_summary,
+                    "error": f"Summary generation timed out after {summary_timeout}s"
+                }
             
             return empty_summary
                 
