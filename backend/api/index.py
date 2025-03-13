@@ -470,6 +470,27 @@ class ChatResponse(BaseModel):
     command_type: Optional[str] = None
     command_data: Optional[Dict[str, Any]] = None
 
+# Import message types with fallbacks
+try:
+    from backend.models.message_types import HumanMessage, AIMessage
+    logger.info("Imported message types from backend.models.message_types")
+except ImportError:
+    try:
+        from langchain_core.messages import HumanMessage, AIMessage
+        logger.info("Imported message types from langchain_core.messages")
+    except ImportError:
+        logger.warning("Could not import standard message types, using custom implementation")
+        # Define fallback message classes
+        class HumanMessage:
+            def __init__(self, content):
+                self.content = content
+                self.type = "human"
+                
+        class AIMessage:
+            def __init__(self, content):
+                self.content = content
+                self.type = "ai"
+
 # Direct implementation of chat endpoints
 @app.post("/api/chat")
 async def chat(chat_request: ChatRequest):
@@ -480,9 +501,15 @@ async def chat(chat_request: ChatRequest):
     request_id = str(uuid.uuid4())
     start_time = datetime.now()
     logger.info(f"Request {request_id} started: POST /api/chat")
-    logger.info(f"Request {request_id} payload: {chat_request.model_dump_json()}")
     
     try:
+        # Log request details for debugging
+        try:
+            logger.info(f"Request {request_id} payload: {chat_request.model_dump_json()}")
+        except Exception as e:
+            logger.warning(f"Could not log request payload: {str(e)}")
+            logger.info(f"Request {request_id} message: {chat_request.message}")
+        
         # Set up a timeout for the entire operation - Vercel has 30s limit
         # We'll use 25s to give some buffer for response handling
         async def process_with_timeout():
@@ -498,48 +525,70 @@ async def chat(chat_request: ChatRequest):
                 "metadata": {
                     "thread_id": thread_id,
                     "timestamp": datetime.now().isoformat(),
-                    "timezone": chat_request.timezone or "UTC"
+                    "timezone": chat_request.timezone or "UTC",
+                    "request_id": request_id,
+                    "language": chat_request.language or "en"
                 },
                 "context": chat_request.context or {},
-                "user_context": chat_request.user_context or {}
+                "user_context": chat_request.user_context or {},
+                "language": chat_request.language or "en"
             }
             
             # Add the new message to the state
             if chat_request.message:
-                state["messages"].append(HumanMessage(content=chat_request.message))
+                try:
+                    state["messages"].append(HumanMessage(content=chat_request.message))
+                    logger.info(f"Added human message to state: {chat_request.message[:50]}...")
+                except Exception as msg_error:
+                    logger.error(f"Error adding message to state: {str(msg_error)}")
+                    # Create a simple dict as fallback
+                    state["messages"].append({"type": "human", "content": chat_request.message})
             
             # Get previous messages for this thread if any
             try:
+                logger.info(f"Getting thread state for {thread_id}")
                 thread_state = await get_thread_state(thread_id)
                 if thread_state:
+                    logger.info(f"Found existing thread state for {thread_id}")
                     # Merge previous messages with new message
                     previous_messages = thread_state.get("messages", [])
                     
-                    # Convert message dicts to Message objects if needed
-                    previous_message_objects = []
-                    for msg in previous_messages:
-                        if isinstance(msg, dict):
-                            if msg.get("type") == "human":
-                                previous_message_objects.append(HumanMessage(content=msg.get("content", "")))
-                            else:
-                                previous_message_objects.append(AIMessage(content=msg.get("content", "")))
-                        else:
-                            previous_message_objects.append(msg)
-                    
-                    # Keep only the last 10 messages to prevent token limits
-                    state["messages"] = previous_message_objects[-10:] + state["messages"]
+                    if previous_messages:
+                        logger.info(f"Found {len(previous_messages)} previous messages")
+                        
+                        # Convert message dicts to Message objects if needed
+                        previous_message_objects = []
+                        for msg in previous_messages:
+                            try:
+                                if isinstance(msg, dict):
+                                    if msg.get("type") == "human":
+                                        previous_message_objects.append(HumanMessage(content=msg.get("content", "")))
+                                    else:
+                                        previous_message_objects.append(AIMessage(content=msg.get("content", "")))
+                                else:
+                                    previous_message_objects.append(msg)
+                            except Exception as msg_convert_error:
+                                logger.warning(f"Error converting message: {str(msg_convert_error)}")
+                                # Skip problematic messages
+                                continue
+                        
+                        # Keep only the last 10 messages to prevent token limits
+                        state["messages"] = previous_message_objects[-10:] + state["messages"]
+                        logger.info(f"Added {len(previous_message_objects)} previous messages to state")
                     
                     # Merge context if it exists
                     if thread_state.get("context") and (not chat_request.context or not chat_request.reset_context):
                         # Only update context if it exists in thread_state and we're not resetting
                         state["context"] = thread_state.get("context", {})
-                        logger.info(f"Loaded context from thread state, size: {len(json.dumps(state['context']))} bytes")
+                        logger.info(f"Loaded context from thread state, size: {len(json.dumps(state['context'], default=str))} bytes")
                     
                     # Merge user context if it exists
                     if thread_state.get("user_context") and not chat_request.reset_context:
                         state["user_context"] = thread_state.get("user_context", {})
+                        logger.info(f"Loaded user context from thread state")
             except Exception as e:
-                logger.error(f"Error loading thread state: {str(e)}", exc_info=True)
+                logger.error(f"Error loading thread state: {str(e)}")
+                logger.error(traceback.format_exc())
                 # Continue with empty/new state if thread state loading fails
             
             # Ensure minimum context structure exists
@@ -557,85 +606,159 @@ async def chat(chat_request: ChatRequest):
                 }
             
             # Process the message through the workflow
-            workflow = get_workflow()
-            updated_state = await workflow.invoke(state)
+            try:
+                logger.info("Getting workflow")
+                workflow = get_workflow()
+                logger.info(f"Invoking workflow with state containing {len(state.get('messages', []))} messages")
+                updated_state = await workflow.invoke(state)
+                logger.info("Workflow processing completed successfully")
+            except Exception as workflow_error:
+                logger.error(f"Error in workflow processing: {str(workflow_error)}")
+                logger.error(traceback.format_exc())
+                
+                # Create a minimal response with error message
+                error_message = "I apologize, but I encountered an error while processing your message. Please try again."
+                
+                # Try to use the original state or create a new one
+                if not state.get("messages"):
+                    state["messages"] = []
+                    
+                # Add the error message
+                try:
+                    state["messages"].append(AIMessage(content=error_message))
+                except Exception:
+                    state["messages"].append({"type": "ai", "content": error_message})
+                
+                updated_state = state
             
             # Save updated state to Redis
             # First make sure any new information in the original context is preserved
             # if there was a temporary context used for this request
-            if chat_request.context and not chat_request.reset_context:
-                updated_context = updated_state.get("context", {})
-                for key, value in chat_request.context.items():
-                    if key not in updated_context:
-                        updated_context[key] = value
-                updated_state["context"] = updated_context
+            try:
+                if chat_request.context and not chat_request.reset_context:
+                    updated_context = updated_state.get("context", {})
+                    for key, value in chat_request.context.items():
+                        if key not in updated_context:
+                            updated_context[key] = value
+                    updated_state["context"] = updated_context
+                
+                # Preserve important fields
+                if "metadata" not in updated_state:
+                    updated_state["metadata"] = {}
+                updated_state["metadata"]["thread_id"] = thread_id
+                
+                # Extract the response message
+                response_message = None
+                for message in reversed(updated_state.get("messages", [])):
+                    try:
+                        # Check if it's a message object with a 'type' attribute
+                        if hasattr(message, 'type'):
+                            if message.type != "human":
+                                response_message = message.content
+                                break
+                        # Check if it's a message with a dictionary type
+                        elif isinstance(message, dict) and message.get("type") != "human":
+                            response_message = message.get("content", "")
+                            break
+                        # Check if it's an AI message 
+                        elif isinstance(message, AIMessage):
+                            response_message = message.content
+                            break
+                    except Exception as msg_error:
+                        logger.warning(f"Error processing message: {str(msg_error)}")
+                        continue
+                
+                # If no response message was found, add a default one
+                if not response_message:
+                    error_message = "I apologize, but I couldn't generate a proper response. Please try again."
+                    try:
+                        updated_state["messages"].append(AIMessage(content=error_message))
+                    except Exception:
+                        updated_state["messages"].append({"type": "ai", "content": error_message})
+                    response_message = error_message
+                
+                # Save the state to Redis
+                logger.info(f"Saving context to Redis for thread {thread_id}")
+                try:
+                    # Use default=str to handle non-serializable objects
+                    if updated_state.get('context'):
+                        # Take a subset of keys for logging
+                        context_subset = {k: v for k, v in updated_state.get('context', {}).items() if k in ['baby_info', 'routines']}
+                        context_sample = json.dumps(context_subset, default=str)
+                    else:
+                        context_sample = "{}"
+                        
+                    if updated_state.get('user_context'):
+                        # Take only first few items from user context
+                        user_context_keys = list(updated_state.get('user_context', {}).keys())[:5]
+                        user_context_subset = {k: updated_state['user_context'][k] for k in user_context_keys if k in updated_state.get('user_context', {})}
+                        user_context_sample = json.dumps(user_context_subset, default=str)
+                    else:
+                        user_context_sample = "{}"
+                        
+                    logger.info(f"Context sample: {context_sample[:100]}...")
+                    logger.info(f"User context sample: {user_context_sample[:100]}...")
+                except Exception as json_error:
+                    logger.warning(f"Error logging context: {str(json_error)}")
+                    logger.warning(traceback.format_exc())
+                
+                success = await save_thread_state(thread_id, updated_state)
+                if success:
+                    logger.info(f"Saved thread state to Redis for {thread_id}")
+                else:
+                    logger.warning(f"Failed to save thread state to Redis for {thread_id}")
+            except Exception as state_error:
+                logger.error(f"Error saving state: {str(state_error)}")
+                logger.error(traceback.format_exc())
             
-            # Preserve important fields
-            updated_state["metadata"]["thread_id"] = thread_id
-            
-            # Extract the response message
-            response_message = None
-            for message in reversed(updated_state.get("messages", [])):
-                if not isinstance(message, HumanMessage):
-                    if isinstance(message, AIMessage):
-                        response_message = message.content
-                    elif isinstance(message, dict) and message.get("type") != "human":
-                        response_message = message.get("content", "")
-                    break
-            
-            # Save the state to Redis
-            logger.info(f"Saving context to Redis: {json.dumps(updated_state.get('context', {}), default=str)[:100]}...")
-            logger.info(f"Saving user_context to Redis: {json.dumps(updated_state.get('user_context', {}), default=str)[:100]}...")
-            
-            success = await save_thread_state(thread_id, updated_state)
-            if success:
-                logger.info(f"Saved thread state to Redis for {thread_id}")
-            else:
-                logger.warning(f"Failed to save thread state to Redis for {thread_id}")
+            # Prepare command data if command was processed
+            command_processed = updated_state.get("metadata", {}).get("command_processed", False)
+            command_type = updated_state.get("metadata", {}).get("command_type")
+            command_data = updated_state.get("metadata", {}).get("command_data", {})
             
             # Build the response
             return {
                 "response": response_message or "I apologize, but I couldn't generate a response at this time.",
                 "thread_id": thread_id,
-                "context": updated_state.get("context", {}),
-                "user_context": updated_state.get("user_context", {}),
-                "domain": updated_state.get("domain", "unknown")
+                "command_processed": command_processed,
+                "command_type": command_type,
+                "command_data": command_data
             }
         
         # Execute with timeout
-        result = await asyncio.wait_for(process_with_timeout(), timeout=25.0)
-        
-        # Calculate and log execution time
-        execution_time = (datetime.now() - start_time).total_seconds()
-        logger.info(f"Request {request_id} processed in {execution_time:.2f} seconds")
-        
-        return result
-    
-    except asyncio.TimeoutError:
-        # Handle timeout gracefully
-        logger.error(f"Request {request_id} timed out after {(datetime.now() - start_time).total_seconds():.2f} seconds")
-        return {
-            "response": "I'm sorry, but it's taking me longer than expected to process your request. Please try again with a simpler question.",
-            "thread_id": chat_request.thread_id or f"thread_{uuid.uuid4().hex[:12]}",
-            "error": "Operation timed out",
-            "context": chat_request.context or {},
-            "user_context": chat_request.user_context or {}
-        }
-    
+        try:
+            result = await asyncio.wait_for(process_with_timeout(), timeout=25.0)
+            
+            # Calculate and log execution time
+            execution_time = (datetime.now() - start_time).total_seconds()
+            logger.info(f"Request {request_id} processed in {execution_time:.2f} seconds")
+            
+            return result
+        except asyncio.TimeoutError:
+            logger.error(f"Request {request_id} timed out after 25 seconds")
+            return {
+                "response": "I'm sorry, but it's taking me longer than expected to process your message. Please try again with a simpler request.",
+                "thread_id": chat_request.thread_id or f"thread_{uuid.uuid4().hex[:12]}",
+                "command_processed": False,
+                "command_type": None,
+                "command_data": None
+            }
     except Exception as e:
-        # Log the error and return a graceful error response
-        logger.error(f"Error in chat endpoint: {str(e)}", exc_info=True)
+        # Log the error
+        logger.error(f"Unhandled error in chat endpoint: {str(e)}")
+        logger.error(traceback.format_exc())
         
-        # Calculate execution time
+        # Calculate execution time for this failed request
         execution_time = (datetime.now() - start_time).total_seconds()
         logger.info(f"Request {request_id} failed after {execution_time:.2f} seconds")
         
+        # Return a graceful error response
         return {
-            "response": "I apologize, but I encountered an error while processing your request. Please try again.",
+            "response": "I apologize, but I encountered an unexpected error while processing your message. Our team has been notified of the issue. Please try again later.",
             "thread_id": chat_request.thread_id or f"thread_{uuid.uuid4().hex[:12]}",
-            "error": str(e),
-            "context": chat_request.context or {},
-            "user_context": chat_request.user_context or {}
+            "command_processed": False,
+            "command_type": None,
+            "command_data": None
         }
 
 @app.get("/api/chat/context/{thread_id}")
@@ -1345,6 +1468,7 @@ def get_workflow():
         return create_workflow()
     except Exception as e:
         logger.error(f"Error creating workflow: {str(e)}")
+        logger.error(traceback.format_exc())
         
         # Fallback to a simple workflow if the import fails
         try:
@@ -1374,18 +1498,33 @@ def get_workflow():
                     return state
                 except Exception as workflow_error:
                     logger.error(f"Error in simple workflow: {str(workflow_error)}")
+                    logger.error(traceback.format_exc())
                     
                     # Return the original state with an error message
                     if "messages" not in state:
                         state["messages"] = []
                     
-                    from backend.models.message_types import AIMessage
+                    # Import at the function level to avoid circular imports
+                    try:
+                        from backend.models.message_types import AIMessage
+                    except ImportError:
+                        # If we can't import from our models, try langchain
+                        try:
+                            from langchain_core.messages import AIMessage
+                        except ImportError:
+                            # Define a simple message class as last resort
+                            class AIMessage:
+                                def __init__(self, content):
+                                    self.content = content
+                                    self.type = "ai"
+                    
                     state["messages"].append(AIMessage(content="I apologize, but I encountered an error while processing your message. Please try again."))
                     return state
             
             return WorkflowInvoker(simple_workflow)
         except Exception as fallback_error:
             logger.error(f"Failed to create fallback workflow: {str(fallback_error)}")
+            logger.error(traceback.format_exc())
             
             # Return an extremely simple workflow as last resort
             class EmergencyWorkflow:
@@ -1393,7 +1532,19 @@ def get_workflow():
                     if "messages" not in state:
                         state["messages"] = []
                     
-                    from langchain_core.messages import AIMessage
+                    # Try multiple imports to ensure we can create a message
+                    try:
+                        from backend.models.message_types import AIMessage
+                    except ImportError:
+                        try:
+                            from langchain_core.messages import AIMessage
+                        except ImportError:
+                            # Define a simple message class as last resort
+                            class AIMessage:
+                                def __init__(self, content):
+                                    self.content = content
+                                    self.type = "ai"
+                    
                     state["messages"].append(AIMessage(content="I'm sorry, but I'm having trouble processing messages right now. Our team is working on a fix."))
                     return state
             
