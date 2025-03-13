@@ -444,120 +444,172 @@ class ChatResponse(BaseModel):
     command_data: Optional[Dict[str, Any]] = None
 
 # Direct implementation of chat endpoints
-@app.post("/api/chat", response_model=ChatResponse)
-async def direct_chat(request: ChatRequest):
+@app.post("/api/chat")
+async def chat(chat_request: ChatRequest):
     """
-    Direct implementation of the chat endpoint to bypass import issues.
+    Process a chat request and return a response.
+    Enhanced with timeout protection for serverless environments.
     """
-    logger.info(f"Direct chat endpoint called with message: {request.message}")
+    request_id = str(uuid.uuid4())
+    start_time = datetime.now()
+    logger.info(f"Request {request_id} started: POST /api/chat")
+    logger.info(f"Request {request_id} payload: {chat_request.model_dump_json()}")
     
     try:
-        # Try to use the backend chat implementation if available
-        try:
-            import backend.workflow.workflow as workflow
-            import backend.services.redis_service as redis_service
-            from backend.models.message_types import HumanMessage, AIMessage
+        # Set up a timeout for the entire operation - Vercel has 30s limit
+        # We'll use 25s to give some buffer for response handling
+        async def process_with_timeout():
+            # Get thread ID from request or generate a new one
+            thread_id = chat_request.thread_id
+            if not thread_id:
+                thread_id = f"thread_{uuid.uuid4().hex[:12]}"
+                logger.info(f"Generated new thread ID: {thread_id}")
             
-            logger.info("Successfully imported backend modules")
+            # Initialize state with thread context from request
+            state = {
+                "messages": [],
+                "metadata": {
+                    "thread_id": thread_id,
+                    "timestamp": datetime.now().isoformat(),
+                    "timezone": chat_request.timezone or "UTC"
+                },
+                "context": chat_request.context or {},
+                "user_context": chat_request.user_context or {}
+            }
             
-            # Get or create thread ID
-            thread_id = request.thread_id or f"default_{request.language}"
+            # Add the new message to the state
+            if chat_request.message:
+                state["messages"].append(HumanMessage(content=chat_request.message))
             
-            # Try to get thread state from Redis
-            state = None
+            # Get previous messages for this thread if any
             try:
-                state = await redis_service.get_thread_state(thread_id)
-                logger.info(f"Retrieved thread state from Redis for {thread_id}")
-                
-                # Log the retrieved context for debugging
-                if state:
-                    context = state.get("context", {})
-                    user_context = state.get("user_context", {})
-                    logger.info(f"Retrieved context from Redis: {json.dumps(context, default=str)}")
-                    logger.info(f"Retrieved user_context from Redis: {json.dumps(user_context, default=str)}")
-            except Exception as e:
-                logger.error(f"Error retrieving thread state: {str(e)}")
-            
-            # Create new state if not found
-            if not state:
-                state = workflow.get_default_state()
-                state["metadata"]["language"] = request.language
-                state["metadata"]["thread_id"] = thread_id
-                logger.info(f"Created new thread state for {thread_id}")
-            
-            # Ensure that context exists
-            if "context" not in state:
-                state["context"] = {}
-                
-            # Ensure that user_context exists
-            if "user_context" not in state:
-                state["user_context"] = {}
-            
-            # Add user message to state
-            user_message = HumanMessage(content=request.message)
-            state["messages"].append(user_message)
-            
-            # Get workflow instance
-            workflow_instance = await workflow.get_workflow()
-            
-            if workflow_instance:
-                # Process the message
-                result = await workflow_instance.invoke(state)
-                
-                # Get the last message (AI response)
-                last_message = result["messages"][-1]
-                if not isinstance(last_message, AIMessage):
-                    last_message = AIMessage(content="I'm sorry, I couldn't process your request.")
-                
-                # Save thread state to Redis
-                try:
-                    # Log the context that will be saved
-                    context = result.get("context", {})
-                    user_context = result.get("user_context", {})
-                    logger.info(f"Saving context to Redis: {json.dumps(context, default=str)}")
-                    logger.info(f"Saving user_context to Redis: {json.dumps(user_context, default=str)}")
+                thread_state = await get_thread_state(thread_id)
+                if thread_state:
+                    # Merge previous messages with new message
+                    previous_messages = thread_state.get("messages", [])
                     
-                    await redis_service.save_thread_state(thread_id, result)
-                    logger.info(f"Saved thread state to Redis for {thread_id}")
-                except Exception as e:
-                    logger.error(f"Error saving thread state: {str(e)}")
-                
-                # Check if command was processed
-                command_processed = result.get("skip_chat", False)
-                command_data = None
-                command_type = None
-                
-                if command_processed and "command_result" in result:
-                    command_result = result["command_result"]
-                    command_type = command_result.get("response_type")
-                    command_data = command_result.get("event_data")
-                
-                return ChatResponse(
-                    response=last_message.content,
-                    command_processed=command_processed,
-                    command_type=command_type,
-                    command_data=command_data
-                )
-            else:
-                logger.error("Failed to initialize workflow")
-                raise Exception("Failed to initialize workflow")
-                
-        except Exception as e:
-            logger.error(f"Error using backend chat implementation: {str(e)}")
-            logger.error(traceback.format_exc())
-            raise
+                    # Convert message dicts to Message objects if needed
+                    previous_message_objects = []
+                    for msg in previous_messages:
+                        if isinstance(msg, dict):
+                            if msg.get("type") == "human":
+                                previous_message_objects.append(HumanMessage(content=msg.get("content", "")))
+                            else:
+                                previous_message_objects.append(AIMessage(content=msg.get("content", "")))
+                        else:
+                            previous_message_objects.append(msg)
+                    
+                    # Keep only the last 10 messages to prevent token limits
+                    state["messages"] = previous_message_objects[-10:] + state["messages"]
+                    
+                    # Merge context if it exists
+                    if thread_state.get("context") and (not chat_request.context or not chat_request.reset_context):
+                        # Only update context if it exists in thread_state and we're not resetting
+                        state["context"] = thread_state.get("context", {})
+                        logger.info(f"Loaded context from thread state, size: {len(json.dumps(state['context']))} bytes")
+                    
+                    # Merge user context if it exists
+                    if thread_state.get("user_context") and not chat_request.reset_context:
+                        state["user_context"] = thread_state.get("user_context", {})
+            except Exception as e:
+                logger.error(f"Error loading thread state: {str(e)}", exc_info=True)
+                # Continue with empty/new state if thread state loading fails
             
-    except Exception as e:
-        logger.error(f"Error in direct chat endpoint: {str(e)}")
-        logger.error(traceback.format_exc())
+            # Ensure minimum context structure exists
+            if not state.get("context"):
+                logger.info("Initializing empty context with default structure")
+                state["context"] = {
+                    "thread_id": thread_id,
+                    "user_timezone": chat_request.timezone or "UTC",
+                    "last_updated": datetime.utcnow().isoformat(),
+                    "baby_info": {},
+                    "routines": {
+                        "sleep": [],
+                        "feeding": []
+                    }
+                }
+            
+            # Process the message through the workflow
+            workflow = get_workflow()
+            updated_state = await workflow.invoke(state)
+            
+            # Save updated state to Redis
+            # First make sure any new information in the original context is preserved
+            # if there was a temporary context used for this request
+            if chat_request.context and not chat_request.reset_context:
+                updated_context = updated_state.get("context", {})
+                for key, value in chat_request.context.items():
+                    if key not in updated_context:
+                        updated_context[key] = value
+                updated_state["context"] = updated_context
+            
+            # Preserve important fields
+            updated_state["metadata"]["thread_id"] = thread_id
+            
+            # Extract the response message
+            response_message = None
+            for message in reversed(updated_state.get("messages", [])):
+                if not isinstance(message, HumanMessage):
+                    if isinstance(message, AIMessage):
+                        response_message = message.content
+                    elif isinstance(message, dict) and message.get("type") != "human":
+                        response_message = message.get("content", "")
+                    break
+            
+            # Save the state to Redis
+            logger.info(f"Saving context to Redis: {json.dumps(updated_state.get('context', {}), default=str)[:100]}...")
+            logger.info(f"Saving user_context to Redis: {json.dumps(updated_state.get('user_context', {}), default=str)[:100]}...")
+            
+            success = await save_thread_state(thread_id, updated_state)
+            if success:
+                logger.info(f"Saved thread state to Redis for {thread_id}")
+            else:
+                logger.warning(f"Failed to save thread state to Redis for {thread_id}")
+            
+            # Build the response
+            return {
+                "response": response_message or "I apologize, but I couldn't generate a response at this time.",
+                "thread_id": thread_id,
+                "context": updated_state.get("context", {}),
+                "user_context": updated_state.get("user_context", {}),
+                "domain": updated_state.get("domain", "unknown")
+            }
         
-        # Return a fallback response
-        return ChatResponse(
-            response=f"I apologize, but I'm having trouble processing your request. The system is experiencing technical difficulties.",
-            command_processed=False,
-            command_type=None,
-            command_data=None
-        )
+        # Execute with timeout
+        result = await asyncio.wait_for(process_with_timeout(), timeout=25.0)
+        
+        # Calculate and log execution time
+        execution_time = (datetime.now() - start_time).total_seconds()
+        logger.info(f"Request {request_id} processed in {execution_time:.2f} seconds")
+        
+        return result
+    
+    except asyncio.TimeoutError:
+        # Handle timeout gracefully
+        logger.error(f"Request {request_id} timed out after {(datetime.now() - start_time).total_seconds():.2f} seconds")
+        return {
+            "response": "I'm sorry, but it's taking me longer than expected to process your request. Please try again with a simpler question.",
+            "thread_id": chat_request.thread_id or f"thread_{uuid.uuid4().hex[:12]}",
+            "error": "Operation timed out",
+            "context": chat_request.context or {},
+            "user_context": chat_request.user_context or {}
+        }
+    
+    except Exception as e:
+        # Log the error and return a graceful error response
+        logger.error(f"Error in chat endpoint: {str(e)}", exc_info=True)
+        
+        # Calculate execution time
+        execution_time = (datetime.now() - start_time).total_seconds()
+        logger.info(f"Request {request_id} failed after {execution_time:.2f} seconds")
+        
+        return {
+            "response": "I apologize, but I encountered an error while processing your request. Please try again.",
+            "thread_id": chat_request.thread_id or f"thread_{uuid.uuid4().hex[:12]}",
+            "error": str(e),
+            "context": chat_request.context or {},
+            "user_context": chat_request.user_context or {}
+        }
 
 @app.get("/api/chat/context/{thread_id}")
 async def direct_get_context(thread_id: str):

@@ -20,6 +20,8 @@ from backend.workflow.post_process import post_process
 from backend.workflow.command_processor import CommandProcessor
 from backend.services.redis_service import get_thread_state, save_thread_state
 import json
+import time
+import copy
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -42,7 +44,101 @@ class WorkflowInvoker:
         self.runner_func = runner_func
         
     async def invoke(self, state: Dict[str, Any]) -> Dict[str, Any]:
-        return await self.runner_func(state)
+        """
+        Invoke the workflow to process user input and generate a response.
+        
+        Args:
+            state: The current conversation state
+            
+        Returns:
+            The updated state
+        """
+        start_time = time.time()
+        logger.info(f"Starting workflow execution for thread {state.get('metadata', {}).get('thread_id', 'unknown')}")
+        
+        if state is None:
+            state = self.get_default_state()
+            logger.warning("No state provided, using default state")
+
+        # Ensure state has basic structure before processing
+        if "context" not in state or not state["context"]:
+            logger.info("Initializing empty context in workflow with default structure")
+            state["context"] = {
+                "thread_id": state.get("metadata", {}).get("thread_id", ""),
+                "user_timezone": state.get("metadata", {}).get("timezone", "UTC"),
+                "last_updated": datetime.utcnow().isoformat(),
+                "baby_info": {},
+                "routines": {
+                    "sleep": [],
+                    "feeding": []
+                }
+            }
+        
+        if "user_context" not in state:
+            state["user_context"] = {}
+        
+        # Ensure metadata exists
+        if "metadata" not in state:
+            state["metadata"] = {}
+        
+        # Store original context to prevent accidental loss
+        original_context = copy.deepcopy(state.get("context", {}))
+        original_user_context = copy.deepcopy(state.get("user_context", {}))
+        
+        # Ensure messages list exists
+        if "messages" not in state:
+            state["messages"] = []
+        
+        try:
+            # Process the message to determine the domain
+            state = await classify_domain(state)
+            logger.info(f"Domain classification: {state.get('domain', 'unknown')}")
+            
+            # Generate a response based on the domain and other state information
+            state = await generate_response(state)
+            logger.info(f"Response generated for domain: {state.get('domain', 'unknown')}")
+            
+            # Post-process the response to handle tracking commands, etc.
+            state = await post_process(state)
+            logger.info(f"Post-processing completed")
+            
+            # Check if context was lost during processing and restore it
+            if not state.get("context") and original_context:
+                logger.warning("Context was lost during processing, restoring from backup")
+                state["context"] = original_context
+                
+            if not state.get("user_context") and original_user_context:
+                logger.warning("User context was lost during processing, restoring from backup")
+                state["user_context"] = original_user_context
+            
+            # Calculate and log execution time
+            execution_time = time.time() - start_time
+            logger.info(f"Workflow execution completed in {execution_time:.2f} seconds")
+            
+            # Log final context summary
+            context_size = len(json.dumps(state.get("context", {})))
+            user_context_size = len(json.dumps(state.get("user_context", {})))
+            logger.info(f"Final context size: {context_size} bytes, user context size: {user_context_size} bytes")
+            
+            return state
+        except Exception as e:
+            logger.error(f"Error in workflow execution: {str(e)}", exc_info=True)
+            
+            # If an error occurred, try to preserve context
+            if not state.get("context") and original_context:
+                state["context"] = original_context
+            
+            if not state.get("user_context") and original_user_context:
+                state["user_context"] = original_user_context
+                
+            # Add error message to state
+            state["error"] = str(e)
+            
+            # Add error response to messages
+            if "messages" in state:
+                state["messages"].append(AIMessage(content="I'm sorry, I encountered an error processing your request. Please try again."))
+            
+            return state
 
 # Initialize global variables
 _workflow = None
@@ -258,19 +354,26 @@ async def get_workflow():
     return _workflow
 
 def get_default_state() -> Dict[str, Any]:
-    """Get the default state for a new conversation"""
-    thread_id = f"thread_{datetime.now().strftime('%Y%m%d%H%M%S')}"
+    """
+    Get a default state for a new conversation.
+    
+    Returns:
+        A default state dictionary
+    """
     return {
         "messages": [],
-        "context": {},
-        "domain": "",
-        "extracted_entities": set(),
-        "language": "en",
         "metadata": {
-            "created_at": datetime.now().isoformat(),
-            "last_updated": datetime.now().isoformat(),
-            "thread_id": thread_id
+            "timestamp": datetime.now().isoformat(),
+            "version": "1.0"
         },
-        "user_context": {},
-        "routines": {}
+        # Initialize empty context with default structure
+        "context": {
+            "baby_info": {},
+            "routines": {
+                "sleep": [],
+                "feeding": []
+            },
+            "last_updated": datetime.utcnow().isoformat()
+        },
+        "user_context": {}
     } 
