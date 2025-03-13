@@ -26,6 +26,13 @@ from backend.services.redis_compat import (
     MessageJSONEncoder
 )
 
+# Define exports explicitly to avoid import issues
+__all__ = [
+    'redis_connection', 'RedisKeyPrefix', 'get_with_fallback', 'set_with_fallback',
+    'delete_with_fallback', 'add_event_to_thread', 'list_append', 'get_thread_state',
+    'save_thread_state', 'get_redis_client'
+]
+
 try:
     from backend.models.message_types import HumanMessage, AIMessage, BaseMessage
 except ImportError:
@@ -219,7 +226,19 @@ async def list_append(key: str, value: str) -> bool:
     This is a convenience wrapper around execute_list_command using rpush.
     """
     logger.debug(f"Appending to list {key}: {value}")
-    return await execute_list_command(key, "rpush", value)
+    try:
+        async with redis_connection() as client:
+            if not client:
+                logger.error(f"Failed to get Redis connection for list operation on {key}")
+                return False
+            
+            # Add value to the list
+            await client.rpush(key, value)
+            logger.info(f"Successfully appended to list {key}")
+            return True
+    except Exception as e:
+        logger.error(f"Error appending to list {key}: {e}")
+        return False
 
 # Add get_redis function referenced in routine_tracker.py but was missing
 async def get_redis():
