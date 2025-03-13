@@ -96,6 +96,9 @@ except Exception as e:
 # Now import other modules
 from typing import Dict, Any, Optional, List, ForwardRef, cast
 
+# Import message type classes that are used in the chat endpoint
+from langchain_core.messages import HumanMessage, AIMessage
+
 # Now import FastAPI and related modules
 try:
     import fastapi
@@ -256,9 +259,29 @@ async def save_thread_state(thread_id: str, state: Dict[str, Any]) -> bool:
         
     key = f"thread_state:{thread_id}"
     
+    # Create a copy of the state for serialization
+    serializable_state = state.copy()
+    
+    # Convert LangChain message objects to dictionaries
+    if "messages" in serializable_state and isinstance(serializable_state["messages"], list):
+        serializable_messages = []
+        for msg in serializable_state["messages"]:
+            if hasattr(msg, "content") and hasattr(msg, "type"):
+                # LangChain message objects
+                serializable_messages.append({
+                    "type": "human" if isinstance(msg, HumanMessage) else "ai",
+                    "content": msg.content,
+                    "additional_kwargs": getattr(msg, "additional_kwargs", {})
+                })
+            elif isinstance(msg, dict):
+                serializable_messages.append(msg)
+            else:
+                logger.warning(f"Unknown message type: {type(msg)}")
+        serializable_state["messages"] = serializable_messages
+    
     # Convert value to JSON with better error handling
     try:
-        value = json.dumps(state, default=str)  # Use default=str to handle non-serializable objects
+        value = json.dumps(serializable_state, default=str)  # Use default=str to handle non-serializable objects
     except Exception as e:
         logger.error(f"Error serializing state for {key}: {e}")
         

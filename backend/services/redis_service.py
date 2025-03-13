@@ -42,6 +42,28 @@ except ImportError:
     class HumanMessage(BaseMessage): pass
     class AIMessage(BaseMessage): pass
 
+# Update to use LangChain message types
+try:
+    # First try to import from langchain_core (preferred)
+    from langchain_core.messages import HumanMessage, AIMessage
+except ImportError:
+    try:
+        # Fall back to traditional models if needed
+        from backend.models.message_types import HumanMessage, AIMessage, BaseMessage
+    except ImportError:
+        # Provide minimal implementation for backward compatibility
+        class BaseMessage:
+            def __init__(self, content=""):
+                self.content = content
+            def to_dict(self): 
+                return {"content": str(self.content)}
+        class HumanMessage(BaseMessage): 
+            @property
+            def type(self): return "human"
+        class AIMessage(BaseMessage):
+            @property
+            def type(self): return "ai"
+
 # Configure logging with more detailed format
 logging.basicConfig(
     level=logging.INFO,

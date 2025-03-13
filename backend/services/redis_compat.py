@@ -244,7 +244,15 @@ logger.info(f"Redis backend: {redis_backend}, URL: {redis_url_masked}")
 class MessageJSONEncoder(json.JSONEncoder):
     """Custom JSON encoder that can serialize message objects and datetime objects."""
     def default(self, obj):
-        if hasattr(obj, 'to_dict'):
+        # Handle LangChain message objects
+        if hasattr(obj, 'content') and hasattr(obj, 'type'):
+            # This is likely a LangChain message
+            return {
+                "type": getattr(obj, "type", "unknown"),
+                "content": getattr(obj, "content", ""),
+                "additional_kwargs": getattr(obj, "additional_kwargs", {})
+            }
+        elif hasattr(obj, 'to_dict'):
             return obj.to_dict()
         elif isinstance(obj, set):
             return list(obj)
