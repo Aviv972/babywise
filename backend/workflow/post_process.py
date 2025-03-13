@@ -139,6 +139,27 @@ async def post_process(state: Dict[str, Any]) -> Dict[str, Any]:
                 if "domain" in state and state["domain"]:
                     state["metadata"]["last_domain"] = state["domain"]
                 
+                # Ensure the basic context structure is always populated
+                if "context" not in state or not state["context"]:
+                    logger.info("Initializing empty context with default structure")
+                    state["context"] = {
+                        "thread_id": state["metadata"].get("thread_id", ""),
+                        "user_timezone": state["metadata"].get("timezone", "UTC"),
+                        "last_updated": datetime.utcnow().isoformat(),
+                        "baby_info": {},
+                        "routines": {
+                            "sleep": [],
+                            "feeding": []
+                        }
+                    }
+                
+                # Make sure minimal context keys exist
+                context = state["context"]
+                if "baby_info" not in context:
+                    context["baby_info"] = {}
+                if "routines" not in context:
+                    context["routines"] = {"sleep": [], "feeding": []}
+                
                 # Log context information for debugging
                 if state["context"]:
                     logger.info(f"Context after processing: {json.dumps(state.get('context', {}), default=str)}")
