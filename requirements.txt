@@ -8,7 +8,7 @@ langchain-core==0.3.39
 langchain-community==0.3.0
 langchain-openai==0.3.7
 langgraph==0.2.20
-langsmith==0.1.0
+langsmith>=0.1.17,<0.2.0
 
 # OpenAI
 openai==1.58.1

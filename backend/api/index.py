@@ -12,6 +12,7 @@ from pathlib import Path
 from datetime import datetime, timezone, timedelta
 from typing import Dict, List, Optional, Any, Union, AsyncGenerator
 
+
 # Set up logging
 logging.basicConfig(
     level=logging.INFO,
@@ -30,7 +31,6 @@ logger.info(f"File location: {__file__}")
 
 # Import Redis modules
 import redis.asyncio
-from backend.services.redis_compat import get_redis_client, get_redis_diagnostics
 
 # Remove old aioredis patch import
 logger.info("Using redis.asyncio for Redis operations")
