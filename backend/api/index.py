@@ -30,7 +30,7 @@ logger.info(f"File location: {__file__}")
 # logger.info(f"Event loop: {asyncio.get_running_loop()}")
 
 # Import Redis modules
-import redis.asyncio
+import redis
 
 # Remove old aioredis patch import
 logger.info("Using redis.asyncio for Redis operations")
