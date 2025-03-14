@@ -33,7 +33,7 @@ async def process_chat(thread_id: str, message: str, language: str = "en") -> Di
     """
     try:
         logger.info(f"Processing chat for thread {thread_id}")
-        workflow = get_workflow()
+        workflow = await get_workflow()
         logger.info(f"Configured workflow with thread_id: {thread_id}")
         
         # Create a human message with our custom type

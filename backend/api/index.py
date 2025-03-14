@@ -28,34 +28,12 @@ logger.info(f"File location: {__file__}")
 # Don't access event loop during module initialization
 # logger.info(f"Event loop: {asyncio.get_running_loop()}")
 
-# Import aioredis patch before any other imports
-try:
-    logger.info("Importing aioredis_patch module...")
-    from backend.api.aioredis_patch import patch_result as aioredis_patch_result
-    logger.info(f"aioredis patch result: {aioredis_patch_result}")
-    
-    # Verify we can import AuthenticationError
-    try:
-        from aioredis.exceptions import AuthenticationError
-        logger.info(f"Successfully imported AuthenticationError: {AuthenticationError}")
-    except ImportError as e:
-        logger.error(f"Failed to import AuthenticationError after patching: {e}")
-        logger.error(traceback.format_exc())
-        
-        # Try to diagnose the issue
-        try:
-            import aioredis
-            logger.info(f"aioredis module: {aioredis}")
-            logger.info(f"aioredis module location: {aioredis.__file__}")
-            
-            import aioredis.exceptions
-            logger.info(f"aioredis.exceptions module: {aioredis.exceptions}")
-            logger.info(f"Available attributes in aioredis.exceptions: {dir(aioredis.exceptions)}")
-        except Exception as e2:
-            logger.error(f"Error diagnosing aioredis: {e2}")
-except Exception as e:
-    logger.error(f"Failed to import aioredis patch: {str(e)}")
-    logger.error(traceback.format_exc())
+# Import Redis modules
+import redis.asyncio
+from backend.services.redis_compat import get_redis_client, get_redis_diagnostics
+
+# Remove old aioredis patch import
+logger.info("Using redis.asyncio for Redis operations")
 
 # Now import the rest of the modules
 from fastapi import FastAPI, Request, HTTPException, Depends
@@ -64,7 +42,6 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 import uuid
-import aioredis
 
 # Import compatibility patches
 from backend.api.compatibility import apply_all_patches
@@ -121,7 +98,7 @@ REDIS_URL = os.environ.get("STORAGE_URL", "redis://localhost:6379/0")
 _memory_cache = {}
 
 @contextlib.asynccontextmanager
-async def redis_connection() -> AsyncGenerator[Optional[aioredis.Redis], None]:
+async def redis_connection() -> AsyncGenerator[Optional[redis.asyncio.Redis], None]:
     """
     Context manager for Redis connections to ensure proper cleanup.
     
@@ -157,9 +134,8 @@ async def redis_connection() -> AsyncGenerator[Optional[aioredis.Redis], None]:
                 return
                 
             # Connect to Redis with modern from_url method
-            client = await aioredis.from_url(
+            client = await redis.asyncio.from_url(
                 redis_url,
-                encoding="utf-8",
                 decode_responses=True,
                 socket_timeout=3.0,  # Short timeout for serverless
                 socket_connect_timeout=2.0,
@@ -176,8 +152,7 @@ async def redis_connection() -> AsyncGenerator[Optional[aioredis.Redis], None]:
                 logger.error(f"Redis connection validation failed: {e}")
                 if client:
                     try:
-                        client.close()
-                        await client.wait_closed()
+                        await client.close()
                     except Exception as ex:
                         logger.warning(f"Error closing invalid Redis connection: {ex}")
                     client = None
@@ -194,8 +169,7 @@ async def redis_connection() -> AsyncGenerator[Optional[aioredis.Redis], None]:
         # Always ensure the connection is properly closed
         if client:
             try:
-                client.close()
-                await client.wait_closed()
+                await client.close()
             except Exception as e:
                 # Log but don't re-raise - we don't want cleanup errors to propagate
                 logger.warning(f"Error closing Redis connection: {e}")
@@ -518,247 +492,46 @@ async def chat(chat_request: ChatRequest):
             if not thread_id:
                 thread_id = f"thread_{uuid.uuid4().hex[:12]}"
                 logger.info(f"Generated new thread ID: {thread_id}")
+                
+            # Call the process_chat function
+            from backend.api.chat import process_chat
+            result = await process_chat(
+                message_text=chat_request.message,
+                thread_id=thread_id,
+                language=chat_request.language or "en"
+            )
             
-            # Initialize state with thread context from request
-            state = {
-                "messages": [],
-                "metadata": {
-                    "thread_id": thread_id,
-                    "timestamp": datetime.now().isoformat(),
-                    "timezone": chat_request.timezone or "UTC",
-                    "request_id": request_id,
-                    "language": chat_request.language or "en"
-                },
-                "context": chat_request.context or {},
-                "user_context": chat_request.user_context or {},
-                "language": chat_request.language or "en"
-            }
+            logger.info(f"process_chat result: {result}")
             
-            # Add the new message to the state
-            if chat_request.message:
-                try:
-                    state["messages"].append(HumanMessage(content=chat_request.message))
-                    logger.info(f"Added human message to state: {chat_request.message[:50]}...")
-                except Exception as msg_error:
-                    logger.error(f"Error adding message to state: {str(msg_error)}")
-                    # Create a simple dict as fallback
-                    state["messages"].append({"type": "human", "content": chat_request.message})
-            
-            # Get previous messages for this thread if any
-            try:
-                logger.info(f"Getting thread state for {thread_id}")
-                thread_state = await get_thread_state(thread_id)
-                if thread_state:
-                    logger.info(f"Found existing thread state for {thread_id}")
-                    # Merge previous messages with new message
-                    previous_messages = thread_state.get("messages", [])
-                    
-                    if previous_messages:
-                        logger.info(f"Found {len(previous_messages)} previous messages")
-                        
-                        # Convert message dicts to Message objects if needed
-                        previous_message_objects = []
-                        for msg in previous_messages:
-                            try:
-                                if isinstance(msg, dict):
-                                    if msg.get("type") == "human":
-                                        previous_message_objects.append(HumanMessage(content=msg.get("content", "")))
-                                    else:
-                                        previous_message_objects.append(AIMessage(content=msg.get("content", "")))
-                                else:
-                                    previous_message_objects.append(msg)
-                            except Exception as msg_convert_error:
-                                logger.warning(f"Error converting message: {str(msg_convert_error)}")
-                                # Skip problematic messages
-                                continue
-                        
-                        # Keep only the last 10 messages to prevent token limits
-                        state["messages"] = previous_message_objects[-10:] + state["messages"]
-                        logger.info(f"Added {len(previous_message_objects)} previous messages to state")
-                    
-                    # Merge context if it exists
-                    if thread_state.get("context") and (not chat_request.context or not chat_request.reset_context):
-                        # Only update context if it exists in thread_state and we're not resetting
-                        state["context"] = thread_state.get("context", {})
-                        logger.info(f"Loaded context from thread state, size: {len(json.dumps(state['context'], default=str))} bytes")
-                    
-                    # Merge user context if it exists
-                    if thread_state.get("user_context") and not chat_request.reset_context:
-                        state["user_context"] = thread_state.get("user_context", {})
-                        logger.info(f"Loaded user context from thread state")
-            except Exception as e:
-                logger.error(f"Error loading thread state: {str(e)}")
-                logger.error(traceback.format_exc())
-                # Continue with empty/new state if thread state loading fails
-            
-            # Ensure minimum context structure exists
-            if not state.get("context"):
-                logger.info("Initializing empty context with default structure")
-                state["context"] = {
-                    "thread_id": thread_id,
-                    "user_timezone": chat_request.timezone or "UTC",
-                    "last_updated": datetime.utcnow().isoformat(),
-                    "baby_info": {},
-                    "routines": {
-                        "sleep": [],
-                        "feeding": []
-                    }
+            if not result.get("processed", False):
+                logger.error("Message processing failed")
+                return {
+                    "response": result.get("message", "I'm sorry, I encountered an error processing your request. Please try again."),
+                    "thread_id": thread_id
                 }
-            
-            # Process the message through the workflow
-            try:
-                logger.info("Getting workflow")
-                workflow = get_workflow()
-                logger.info(f"Invoking workflow with state containing {len(state.get('messages', []))} messages")
-                updated_state = await workflow.invoke(state)
-                logger.info("Workflow processing completed successfully")
-            except Exception as workflow_error:
-                logger.error(f"Error in workflow processing: {str(workflow_error)}")
-                logger.error(traceback.format_exc())
                 
-                # Create a minimal response with error message
-                error_message = "I apologize, but I encountered an error while processing your message. Please try again."
-                
-                # Try to use the original state or create a new one
-                if not state.get("messages"):
-                    state["messages"] = []
-                    
-                # Add the error message
-                try:
-                    state["messages"].append(AIMessage(content=error_message))
-                except Exception:
-                    state["messages"].append({"type": "ai", "content": error_message})
-                
-                updated_state = state
-            
-            # Save updated state to Redis
-            # First make sure any new information in the original context is preserved
-            # if there was a temporary context used for this request
-            try:
-                if chat_request.context and not chat_request.reset_context:
-                    updated_context = updated_state.get("context", {})
-                    for key, value in chat_request.context.items():
-                        if key not in updated_context:
-                            updated_context[key] = value
-                    updated_state["context"] = updated_context
-                
-                # Preserve important fields
-                if "metadata" not in updated_state:
-                    updated_state["metadata"] = {}
-                updated_state["metadata"]["thread_id"] = thread_id
-                
-                # Extract the response message
-                response_message = None
-                for message in reversed(updated_state.get("messages", [])):
-                    try:
-                        # Check if it's a message object with a 'type' attribute
-                        if hasattr(message, 'type'):
-                            if message.type != "human":
-                                response_message = message.content
-                                break
-                        # Check if it's a message with a dictionary type
-                        elif isinstance(message, dict) and message.get("type") != "human":
-                            response_message = message.get("content", "")
-                            break
-                        # Check if it's an AI message 
-                        elif isinstance(message, AIMessage):
-                            response_message = message.content
-                            break
-                    except Exception as msg_error:
-                        logger.warning(f"Error processing message: {str(msg_error)}")
-                        continue
-                
-                # If no response message was found, add a default one
-                if not response_message:
-                    error_message = "I apologize, but I couldn't generate a proper response. Please try again."
-                    try:
-                        updated_state["messages"].append(AIMessage(content=error_message))
-                    except Exception:
-                        updated_state["messages"].append({"type": "ai", "content": error_message})
-                    response_message = error_message
-                
-                # Save the state to Redis
-                logger.info(f"Saving context to Redis for thread {thread_id}")
-                try:
-                    # Use default=str to handle non-serializable objects
-                    if updated_state.get('context'):
-                        # Take a subset of keys for logging
-                        context_subset = {k: v for k, v in updated_state.get('context', {}).items() if k in ['baby_info', 'routines']}
-                        context_sample = json.dumps(context_subset, default=str)
-                    else:
-                        context_sample = "{}"
-                        
-                    if updated_state.get('user_context'):
-                        # Take only first few items from user context
-                        user_context_keys = list(updated_state.get('user_context', {}).keys())[:5]
-                        user_context_subset = {k: updated_state['user_context'][k] for k in user_context_keys if k in updated_state.get('user_context', {})}
-                        user_context_sample = json.dumps(user_context_subset, default=str)
-                    else:
-                        user_context_sample = "{}"
-                        
-                    logger.info(f"Context sample: {context_sample[:100]}...")
-                    logger.info(f"User context sample: {user_context_sample[:100]}...")
-                except Exception as json_error:
-                    logger.warning(f"Error logging context: {str(json_error)}")
-                    logger.warning(traceback.format_exc())
-                
-                success = await save_thread_state(thread_id, updated_state)
-                if success:
-                    logger.info(f"Saved thread state to Redis for {thread_id}")
-                else:
-                    logger.warning(f"Failed to save thread state to Redis for {thread_id}")
-            except Exception as state_error:
-                logger.error(f"Error saving state: {str(state_error)}")
-                logger.error(traceback.format_exc())
-            
-            # Prepare command data if command was processed
-            command_processed = updated_state.get("metadata", {}).get("command_processed", False)
-            command_type = updated_state.get("metadata", {}).get("command_type")
-            command_data = updated_state.get("metadata", {}).get("command_data", {})
-            
-            # Build the response
             return {
-                "response": response_message or "I apologize, but I couldn't generate a response at this time.",
-                "thread_id": thread_id,
-                "command_processed": command_processed,
-                "command_type": command_type,
-                "command_data": command_data
+                "response": result.get("message", ""),
+                "thread_id": thread_id
             }
-        
-        # Execute with timeout
+
+        # Run the processing with a timeout
         try:
             result = await asyncio.wait_for(process_with_timeout(), timeout=25.0)
-            
-            # Calculate and log execution time
-            execution_time = (datetime.now() - start_time).total_seconds()
-            logger.info(f"Request {request_id} processed in {execution_time:.2f} seconds")
-            
+            processing_time = (datetime.now() - start_time).total_seconds()
+            logger.info(f"Request {request_id} processed in {processing_time:.2f}s")
             return result
         except asyncio.TimeoutError:
             logger.error(f"Request {request_id} timed out after 25 seconds")
             return {
-                "response": "I'm sorry, but it's taking me longer than expected to process your message. Please try again with a simpler request.",
-                "thread_id": chat_request.thread_id or f"thread_{uuid.uuid4().hex[:12]}",
-                "command_processed": False,
-                "command_type": None,
-                "command_data": None
+                "response": "I'm sorry, but your request took too long to process. Please try a shorter or simpler message.",
+                "thread_id": chat_request.thread_id or f"thread_{uuid.uuid4().hex[:12]}"
             }
     except Exception as e:
-        # Log the error
-        logger.error(f"Unhandled error in chat endpoint: {str(e)}")
-        logger.error(traceback.format_exc())
-        
-        # Calculate execution time for this failed request
-        execution_time = (datetime.now() - start_time).total_seconds()
-        logger.info(f"Request {request_id} failed after {execution_time:.2f} seconds")
-        
-        # Return a graceful error response
+        logger.exception(f"Error processing chat request: {e}")
         return {
-            "response": "I apologize, but I encountered an unexpected error while processing your message. Our team has been notified of the issue. Please try again later.",
-            "thread_id": chat_request.thread_id or f"thread_{uuid.uuid4().hex[:12]}",
-            "command_processed": False,
-            "command_type": None,
-            "command_data": None
+            "response": "I'm sorry, I encountered an error processing your request. Please try again.",
+            "thread_id": chat_request.thread_id or f"thread_{uuid.uuid4().hex[:12]}"
         }
 
 @app.get("/api/chat/context/{thread_id}")
@@ -1276,7 +1049,6 @@ async def health_check():
         # Check Redis connection
         try:
             # Use the new diagnostics function for detailed Redis information
-            from backend.services.redis_compat import get_redis_diagnostics
             redis_diagnostics = await get_redis_diagnostics()
             
             # Provide detailed Redis information
@@ -1417,8 +1189,8 @@ async def diagnostics():
             modules_info["starlette"] = {"version": starlette.__version__, "location": starlette.__file__}
             
             # Redis modules
-            import aioredis
-            modules_info["aioredis"] = {"version": getattr(aioredis, "__version__", "unknown"), "location": aioredis.__file__}
+            modules_info["redis"] = {"version": redis.__version__, "location": redis.__file__}
+            modules_info["redis.asyncio"] = {"available": True, "location": redis.asyncio.__file__}
             
             # Check for key backend modules
             try:
@@ -1460,12 +1232,121 @@ async def diagnostics():
             "traceback": traceback.format_exc().split("\n")
         }, status_code=500)
 
-def get_workflow():
+async def get_workflow():
     """Get or create the workflow for processing messages"""
     try:
         from backend.workflow.workflow import create_workflow
         logger.info("Creating workflow using imported create_workflow function")
-        return create_workflow()
+        
+        try:
+            # Need to await create_workflow since it's an async function
+            workflow = await create_workflow()
+            logger.info("Successfully created workflow from imported function")
+            return workflow
+        except Exception as e:
+            logger.error(f"Error with imported create_workflow: {str(e)}")
+            logger.error(traceback.format_exc())
+            
+            # Create a simple sequential workflow directly instead
+            from backend.workflow.workflow import WorkflowInvoker
+            from backend.workflow.extract_context import extract_context
+            from backend.workflow.select_domain import select_domain  
+            from backend.workflow.generate_response import generate_response
+            from backend.workflow.post_process import post_process
+            
+            logger.info("Creating direct workflow implementation")
+            
+            # Define a simple sequential workflow function that doesn't rely on async/await syntax
+            async def simple_workflow_runner(state):
+                try:
+                    # Log the input state
+                    logger.info(f"Processing workflow with {len(state.get('messages', []))} messages")
+                    
+                    # Make a copy of the state to avoid modifying the original
+                    current_state = state.copy()
+                    
+                    # Store original context to prevent accidental loss
+                    import copy
+                    original_context = copy.deepcopy(current_state.get("context", {}))
+                    original_user_context = copy.deepcopy(current_state.get("user_context", {}))
+                    
+                    # Extract context
+                    logger.info("Running extract_context")
+                    try:
+                        current_state = await extract_context(current_state)
+                    except Exception as e:
+                        logger.error(f"Error in extract_context: {str(e)}")
+                        logger.error(traceback.format_exc())
+                    
+                    # Select domain
+                    logger.info("Running select_domain")
+                    try:
+                        current_state = await select_domain(current_state)
+                    except Exception as e:
+                        logger.error(f"Error in select_domain: {str(e)}")
+                        logger.error(traceback.format_exc())
+                        # Set a default domain if there's an error
+                        current_state["domain"] = "general"
+                    
+                    # Generate response
+                    logger.info("Running generate_response")
+                    try:
+                        current_state = await generate_response(current_state)
+                    except Exception as e:
+                        logger.error(f"Error in generate_response: {str(e)}")
+                        logger.error(traceback.format_exc())
+                        # Add a fallback response if there's an error
+                        try:
+                            current_state["messages"].append(AIMessage(content="I apologize, but I encountered an error generating a response. Could you please try again?"))
+                        except Exception as msg_error:
+                            logger.error(f"Error adding message: {str(msg_error)}")
+                            # Use a dict as fallback
+                            current_state["messages"].append({"type": "ai", "content": "I apologize, but I encountered an error generating a response. Could you please try again?"})
+                    
+                    # Post-process
+                    logger.info("Running post_process")
+                    try:
+                        current_state = await post_process(current_state)
+                    except Exception as e:
+                        logger.error(f"Error in post_process: {str(e)}")
+                        logger.error(traceback.format_exc())
+                    
+                    # Check if context was lost during processing and restore it
+                    if not current_state.get("context") and original_context:
+                        logger.warning("Context was lost during processing, restoring from backup")
+                        current_state["context"] = original_context
+                        
+                    if not current_state.get("user_context") and original_user_context:
+                        logger.warning("User context was lost during processing, restoring from backup")
+                        current_state["user_context"] = original_user_context
+                    
+                    logger.info("Workflow execution completed successfully")
+                    return current_state
+                except Exception as e:
+                    logger.error(f"Error in workflow execution: {str(e)}")
+                    logger.error(traceback.format_exc())
+                    
+                    # Ensure we have a valid state to return
+                    if "messages" not in state:
+                        state["messages"] = []
+                        
+                    # Add a fallback error message
+                    try:
+                        state["messages"].append(AIMessage(content="I apologize, but I encountered an error processing your message. Please try again."))
+                    except Exception as msg_error:
+                        logger.error(f"Error adding message: {str(msg_error)}")
+                        # Use a dict as fallback
+                        state["messages"].append({"type": "ai", "content": "I apologize, but I encountered an error processing your message. Please try again."})
+                    
+                    return state
+            
+            # Return a workflow invoker with our simple runner
+            return WorkflowInvoker(simple_workflow_runner)
+            
+        except Exception as e:
+            logger.error(f"Error creating direct workflow: {str(e)}")
+            logger.error(traceback.format_exc())
+            raise
     except Exception as e:
         logger.error(f"Error creating workflow: {str(e)}")
         logger.error(traceback.format_exc())
@@ -1518,7 +1399,7 @@ def get_workflow():
                                     self.content = content
                                     self.type = "ai"
                     
-                    state["messages"].append(AIMessage(content="I apologize, but I encountered an error while processing your message. Please try again."))
+                    state["messages"].append(AIMessage(content="I apologize, but I encountered an error processing your message. Please try again."))
                     return state
             
             return WorkflowInvoker(simple_workflow)
@@ -1532,20 +1413,44 @@ def get_workflow():
                     if "messages" not in state:
                         state["messages"] = []
                     
-                    # Try multiple imports to ensure we can create a message
-                    try:
-                        from backend.models.message_types import AIMessage
-                    except ImportError:
-                        try:
-                            from langchain_core.messages import AIMessage
-                        except ImportError:
-                            # Define a simple message class as last resort
-                            class AIMessage:
-                                def __init__(self, content):
-                                    self.content = content
-                                    self.type = "ai"
+                    logger.error("Using EMERGENCY workflow due to critical errors in workflow creation")
+                    logger.error("This indicates a serious issue with the application configuration")
                     
-                    state["messages"].append(AIMessage(content="I'm sorry, but I'm having trouble processing messages right now. Our team is working on a fix."))
+                    # Define AIMessage class directly without imports
+                    class LocalAIMessage:
+                        def __init__(self, content):
+                            self.content = content
+                            self.type = "ai"
+                    
+                    error_response = (
+                        "I'm sorry, but I'm experiencing technical difficulties at the moment. "
+                        "Our team has been automatically notified and is working on a fix. "
+                        "Please try again in a few minutes, or contact support if the issue persists."
+                    )
+                    
+                    # Create a properly formatted message with detailed diagnostic info
+                    try:
+                        # Create a basic timestamp for debugging
+                        import time
+                        timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+                        
+                        # Add metadata about the error if available
+                        if "metadata" not in state:
+                            state["metadata"] = {}
+                        
+                        state["metadata"]["error_type"] = "emergency_workflow"
+                        state["metadata"]["error_time"] = timestamp
+                        state["metadata"]["command_processed"] = False
+                        
+                        # Add the response message
+                        state["messages"].append(LocalAIMessage(content=error_response))
+                        
+                        logger.info(f"Emergency workflow returned response at {timestamp}")
+                    except Exception as final_error:
+                        logger.critical(f"Critical error in emergency response: {str(final_error)}")
+                        # Last resort - use a dict
+                        state["messages"].append({"type": "ai", "content": error_response})
+                    
                     return state
             
             return EmergencyWorkflow()

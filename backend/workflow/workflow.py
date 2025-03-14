@@ -91,7 +91,7 @@ class WorkflowInvoker:
         
         try:
             # Process the message to determine the domain
-            state = await classify_domain(state)
+            state = await select_domain(state)
             logger.info(f"Domain classification: {state.get('domain', 'unknown')}")
             
             # Generate a response based on the domain and other state information
