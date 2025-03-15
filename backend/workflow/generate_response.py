@@ -375,7 +375,7 @@ async def generate_llm_response(messages: List[Dict[str, str]], language: str = 
         # Check if OpenAI API key is available
         openai_api_key = os.environ.get("OPENAI_API_KEY", "")
         # If key starts with ${, it's not properly set
-        if not openai_api_key or openai_api_key.startswith("${"):
+        if not openai_api_key:
             logger.warning("OpenAI API key not found or invalid, using mock response")
             # Return a mock response based on language
             if language == "he":

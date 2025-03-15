@@ -540,11 +540,16 @@ def patch_aioredis_timeout() -> bool:
     """
     Patch aioredis TimeoutError definition for Python 3.12 compatibility.
     
-    In Python 3.12, asyncio.TimeoutError and builtins.TimeoutError are the same class,
+    This patch is needed because Python 3.12 removed the AsyncIOTimeoutError class,
     which causes a duplicate base class error in aioredis's exception definition.
     
+    NOTE: This patch is transitional and exists only for backward compatibility.
+    The codebase has been migrated from aioredis to redis.asyncio (redis-py >=4.2.0),
+    but this patch is kept to support any legacy code or tests that might still
+    import aioredis. This can be removed once all aioredis usage is eliminated.
+    
     Returns:
-        bool: True if patch was applied successfully, False otherwise
+        bool: True if the patch was applied successfully, False otherwise
     """
     try:
         import sys

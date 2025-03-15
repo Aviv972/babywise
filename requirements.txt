@@ -20,6 +20,7 @@ redis==5.0.1
 pymongo[srv]==4.6.1
 motor==3.3.2
 dnspython==2.5.0
+vercel-kv==0.1.5
 
 # Web and API related
 starlette==0.36.3

@@ -14,7 +14,7 @@
                 ],
                 "memory": 1024,
                 "maxDuration": 60,
-                "installCommand": "pip install --no-deps -r requirements.txt && pip install pydantic==2.1.1 vercel-kv==0.1.5"
+                "installCommand": "pip install -r requirements.txt"
             }
         },
         {
@@ -28,6 +28,8 @@
     ],
     "routes": [
         { "src": "/static/(.*)", "dest": "/static/$1" },
+        { "src": "/api/warmup", "dest": "/backend/api/index.py" },
+        { "src": "/api/diagnostics", "dest": "/backend/api/index.py" },
         { "src": "/api/routines/events/latest", "dest": "/backend/api/index.py" },
         { "src": "/api/routines/events(.*)", "dest": "/backend/api/index.py" },
         { "src": "/api/routines/(.*)", "dest": "/backend/api/index.py" },
