@@ -1,0 +1,36 @@
+from setuptools import setup, find_packages
+
+setup(
+    name="babywise-assistant",
+    version="1.0.0",
+    packages=find_packages(include=[
+        "backend", 
+        "backend.api", 
+        "backend.models", 
+        "backend.services", 
+        "backend.workflow", 
+        "backend.db"
+    ]),
+    include_package_data=True,
+    install_requires=[
+        "fastapi==0.115.11",
+        "uvicorn==0.34.0",
+        "starlette==0.46.1",
+        "redis==5.2.1",
+        "langchain-core==0.3.45",
+        "langchain-openai==0.3.8",
+        "langgraph==0.3.11",
+        "openai==1.66.3",
+        "sqlalchemy==2.0.39",
+        "aiosqlite==0.21.0",
+        "python-multipart==0.0.20",
+        "python-jose==3.4.0",
+        "passlib==1.7.4",
+        "httpx==0.28.1",
+        "jinja2==3.1.6",
+        "aiofiles==24.1.0",
+        "python-dotenv==1.0.1",
+        "typing-extensions==4.12.2",
+    ],
+    python_requires=">=3.12",
+) 

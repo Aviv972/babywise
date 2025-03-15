@@ -2,13 +2,10 @@
 fastapi==0.115.11
 uvicorn[standard]==0.34.0
 
-# LangChain and related packages
-langchain==0.3.20
+# LangChain and related packages (minimized)
 langchain-core==0.3.45
-langchain-community==0.3.19
 langchain-openai==0.3.8
 langgraph==0.3.11
-langsmith==0.3.15
 
 # OpenAI
 openai==1.66.3
@@ -17,24 +14,17 @@ openai==1.66.3
 sqlalchemy==2.0.39
 aiosqlite==0.21.0
 redis==5.2.1
-pymongo[srv]==4.11.2
-motor==3.7.0
-dnspython==2.7.0
 
-# Web and API related
+# Web and API related (essentials only)
 starlette==0.46.1
 python-multipart==0.0.20
 python-jose==3.4.0
 passlib==1.7.4
 bcrypt==4.3.0
-aiohttp==3.11.13
 httpx==0.28.1
 jinja2==3.1.6
 aiofiles==24.1.0
 
 # Utilities
 python-dotenv==1.0.1
-typing-extensions==4.12.2
-certifi==2025.1.31
-setuptools==75.8.2
-importlib-metadata==7.0.2 
+typing-extensions==4.12.2 

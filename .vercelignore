@@ -47,3 +47,32 @@ README*
 **/*.test.py
 **/*.test.tsx
 **/*.test.ts
+
+# Additional files to exclude
+**/*.pyc
+**/__pycache__/
+**/.git*
+**/.vscode*
+**/.idea*
+**/node_modules/
+**/.DS_Store
+
+# Unused backend modules that might be pulled in by dependencies
+**/tensorflow*
+**/torch*
+**/pandas*
+**/numpy*
+**/scipy*
+**/sklearn*
+**/transformers*
+**/*rust*
+**/*cpp*
+**/*c++*
+**/*opencv*
+**/cv2*
+**/*audio*
+**/*video*
+**/*image*
+**/*vision*
+**/PIL*
+**/*tokenizers*/

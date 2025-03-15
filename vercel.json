@@ -8,9 +8,16 @@
                 "runtime": "python3.12",
                 "maxLambdaSize": "250mb",
                 "includeFiles": [
-                    "backend/**",
-                    "static/**",
-                    "frontend/**"
+                    "backend/api/*.py",
+                    "backend/models/*.py",
+                    "backend/services/*.py",
+                    "backend/workflow/*.py",
+                    "backend/db/*.py",
+                    "static/images/**",
+                    "frontend/index.html",
+                    "frontend/css/**",
+                    "frontend/js/**",
+                    "vercel_build.sh"
                 ],
                 "excludeFiles": [
                     "**/*.md",
@@ -20,11 +27,15 @@
                     "**/*.test.py",
                     ".git/**",
                     ".github/**",
-                    ".vscode/**"
+                    ".vscode/**",
+                    "**/*test*/**",
+                    "**/node_modules/**",
+                    "**/.DS_Store",
+                    "**/.git*"
                 ],
                 "memory": 1024,
                 "maxDuration": 60,
-                "installCommand": "pip install -r requirements-prod.txt"
+                "installCommand": "bash vercel_build.sh"
             }
         },
         {
