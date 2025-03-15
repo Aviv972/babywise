@@ -29,7 +29,6 @@
     "routes": [
         { "src": "/static/(.*)", "dest": "/static/$1" },
         { "src": "/api/warmup", "dest": "/backend/api/index.py" },
-        { "src": "/api/diagnostics", "dest": "/backend/api/index.py" },
         { "src": "/api/routines/events/latest", "dest": "/backend/api/index.py" },
         { "src": "/api/routines/events(.*)", "dest": "/backend/api/index.py" },
         { "src": "/api/routines/(.*)", "dest": "/backend/api/index.py" },
