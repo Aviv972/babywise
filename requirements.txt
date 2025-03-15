@@ -2,6 +2,9 @@
 fastapi==0.109.2
 uvicorn[standard]==0.27.1
 
+# First explicitly set pydantic to a version that works with all dependencies
+pydantic==2.7.4
+
 # LangChain and related packages
 langchain==0.3.0
 langchain-core==0.3.39
@@ -20,7 +23,8 @@ redis==5.0.1
 pymongo[srv]==4.6.1
 motor==3.3.2
 dnspython==2.5.0
-vercel-kv==0.1.5
+# Using a newer version of vercel-kv that works with newer pydantic
+vercel-kv==0.2.1
 
 # Web and API related
 starlette==0.36.3
