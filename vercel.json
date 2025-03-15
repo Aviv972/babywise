@@ -2,22 +2,18 @@
     "version": 2,
     "builds": [
         {
-            "src": "backend/api/index.py",
+            "src": "minimal_api.py",
             "use": "@vercel/python",
             "config": {
                 "runtime": "python3.12",
                 "maxLambdaSize": "250mb",
                 "includeFiles": [
-                    "backend/api/*.py",
-                    "backend/models/*.py",
-                    "backend/services/*.py",
-                    "backend/workflow/*.py",
-                    "backend/db/*.py",
+                    "minimal_api.py",
+                    "minimal-requirements.txt",
                     "static/images/**",
                     "frontend/index.html",
                     "frontend/css/**",
-                    "frontend/js/**",
-                    "vercel_build.sh"
+                    "frontend/js/**"
                 ],
                 "excludeFiles": [
                     "**/*.md",
@@ -31,11 +27,12 @@
                     "**/*test*/**",
                     "**/node_modules/**",
                     "**/.DS_Store",
-                    "**/.git*"
+                    "**/.git*",
+                    "backend/**"
                 ],
                 "memory": 1024,
                 "maxDuration": 60,
-                "installCommand": "bash vercel_build.sh"
+                "installCommand": "pip install --no-cache-dir -r minimal-requirements.txt"
             }
         },
         {
@@ -49,11 +46,10 @@
     ],
     "routes": [
         { "src": "/static/(.*)", "dest": "/static/$1" },
-        { "src": "/api/warmup", "dest": "/backend/api/index.py" },
-        { "src": "/api/routines/events/latest", "dest": "/backend/api/index.py" },
-        { "src": "/api/routines/events(.*)", "dest": "/backend/api/index.py" },
-        { "src": "/api/routines/(.*)", "dest": "/backend/api/index.py" },
-        { "src": "/api/(.*)", "dest": "/backend/api/index.py" },
+        { "src": "/api/health", "dest": "/minimal_api.py" },
+        { "src": "/api/redis-test", "dest": "/minimal_api.py" },
+        { "src": "/api/chat", "dest": "/minimal_api.py" },
+        { "src": "/api/(.*)", "dest": "/minimal_api.py" },
         { "src": "/(.*\\.(js|css|svg|png|jpg|jpeg|gif|ico))", "dest": "/frontend/$1" },
         { "src": "/(.*)", "dest": "/frontend/index.html" }
     ],

@@ -1,3 +1,15 @@
+# Exclude almost everything by default
+*
+
+# Only include specific files needed
+!minimal_api.py
+!minimal-requirements.txt
+!vercel.json
+!static/images/**
+!frontend/index.html
+!frontend/css/**
+!frontend/js/**
+
 # Development and testing files
 tests/
 scripts/
@@ -57,7 +69,8 @@ README*
 **/node_modules/
 **/.DS_Store
 
-# Unused backend modules that might be pulled in by dependencies
+# Unused backend modules 
+backend/
 **/tensorflow*
 **/torch*
 **/pandas*

@@ -1,0 +1,5 @@
+fastapi==0.115.11
+uvicorn==0.34.0
+starlette==0.46.1
+redis==5.2.1
+python-dotenv==1.0.1 
