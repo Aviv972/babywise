@@ -1,12 +1,23 @@
 {
     "version": 2,
-    "functions": {
-        "api/*.py": {
-            "runtime": "python3.12",
-            "memory": 1024,
-            "maxDuration": 60
+    "builds": [
+        {
+            "src": "api/index.py",
+            "use": "@vercel/python",
+            "config": {
+                "runtime": "python3.12",
+                "maxLambdaSize": "50mb"
+            }
+        },
+        {
+            "src": "frontend/**",
+            "use": "@vercel/static"
+        },
+        {
+            "src": "static/**",
+            "use": "@vercel/static"
         }
-    },
+    ],
     "routes": [
         { "src": "/favicon.ico", "dest": "/frontend/favicon.ico" },
         { "src": "/favicon.svg", "dest": "/frontend/favicon.svg" },
@@ -14,7 +25,7 @@
         { "src": "/style.css", "dest": "/frontend/style.css" },
         { "src": "/script.js", "dest": "/frontend/script.js" },
         { "src": "/static/(.*)", "dest": "/static/$1" },
-        { "src": "/api/(.*)", "dest": "/api" },
+        { "src": "/api/(.*)", "dest": "/api/index.py" },
         { "src": "/(.*\\.(js|css|svg|png|jpg|jpeg|gif|ico))", "dest": "/frontend/$1" },
         { "src": "/", "dest": "/frontend/index.html" },
         { "src": "/(.*)", "dest": "/frontend/index.html" }

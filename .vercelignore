@@ -1,25 +1,3 @@
-# Exclude almost everything by default
-*
-
-# Only include specific files needed
-!minimal_api.py
-!minimal-requirements.txt
-!vercel.json
-!frontend/index.html
-!frontend/*.js
-!frontend/*.css
-!frontend/*.svg
-!frontend/*.ico
-!frontend/favicon.svg
-!frontend/favicon.ico
-!frontend/baby-icon.svg
-!frontend/style.css
-!frontend/script.js
-!static/images/**
-!static/css/**
-!static/js/**
-!static/frontend/**
-
 # Development and testing files
 tests/
 scripts/
