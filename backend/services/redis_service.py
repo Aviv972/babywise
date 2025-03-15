@@ -1,366 +1,275 @@
 """
-Babywise Assistant - Redis Service
-
-This module provides Redis operations for the Babywise Assistant,
-using redis.asyncio for modern Python compatibility.
+Redis Service for Upstash Redis access using the standard redis-py package.
+This provides a higher-level interface to the Redis connection.
 """
 
 import os
-import json
 import logging
-import asyncio
-import contextlib
-from typing import Optional, Dict, Any, List, AsyncGenerator
-from datetime import datetime, timedelta
-from enum import Enum
-from backend.services.redis_compat import get_redis_client
+import json
+import traceback
+from typing import Any, Dict, List, Optional, Union
+
+try:
+    import redis.asyncio
+    REDIS_AVAILABLE = True
+except ImportError:
+    REDIS_AVAILABLE = False
+    logging.warning("redis.asyncio package not available, using memory cache only")
 
 # Configure logging
-logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Export the functions needed by other modules
-__all__ = [
-    'redis_connection', 
-    'get_thread_state',
-    'save_thread_state', 
-    'delete_thread_state',
-    'add_event_to_thread',
-    'list_append',
-    'RedisKeyPrefix',
-    'get_with_fallback',
-    'set_with_fallback',
-    'delete_with_fallback',
-    'cache_routine_summary',
-    'get_cached_routine_summary',
-    'cache_recent_events',
-    'get_cached_recent_events',
-    'cache_active_routine',
-    'get_active_routine',
-    'invalidate_routine_cache',
-    'get_thread_events',
-    'get_redis',
-    'initialize_redis',
-    'ensure_redis_initialized'
-]
+# In-memory fallback cache when Redis is unavailable
+_memory_cache = {}
 
-# In-memory fallback cache
-_memory_cache: Dict[str, Any] = {}
-
-# Define Redis key prefixes as Enum for backward compatibility
-class RedisKeyPrefix(str, Enum):
-    """Redis key prefixes for different types of data."""
-    THREAD_STATE = "thread_state"
-    EVENT = "event"
-    THREAD_EVENTS = "thread_events"
-    ROUTINE_SUMMARY = "routine_summary"
-    RECENT_EVENTS = "recent_events"
-    ACTIVE_ROUTINE = "active_routine"
-
-# Define key prefixes for Redis
-THREAD_STATE_PREFIX = "thread_state"
-EVENT_PREFIX = "event"
-THREAD_EVENTS_PREFIX = "thread_events"
-ROUTINE_SUMMARY_PREFIX = "routine_summary"
-RECENT_EVENTS_PREFIX = "recent_events"
-
-# Expiration times (in seconds)
-THREAD_STATE_EXPIRATION = 86400  # 24 hours
-ROUTINE_SUMMARY_EXPIRATION = 3600  # 1 hour
-RECENT_EVENTS_EXPIRATION = 1800  # 30 minutes
-ACTIVE_ROUTINE_EXPIRATION = 7200  # 2 hours
-
-@contextlib.asynccontextmanager
-async def redis_connection() -> AsyncGenerator[Optional[Any], None]:
+class RedisService:
     """
-    Context manager for Redis connections to ensure proper cleanup.
-    This function is maintained for backward compatibility.
+    Service for interacting with Redis (optimized for Upstash Redis).
+    Provides common operations and handles connection errors with fallbacks.
     """
-    client = None
-    try:
-        client = await get_redis_client()
-        yield client
-    finally:
-        if client:
+    
+    def __init__(self):
+        """Initialize the Redis service."""
+        self.client = None
+        if REDIS_AVAILABLE:
             try:
-                await client.close()
+                # Try Upstash URL first, fall back to STORAGE_URL
+                redis_url = os.environ.get("UPSTASH_REDIS_URL")
+                if not redis_url:
+                    redis_url = os.environ.get("STORAGE_URL")
+                    
+                if not redis_url:
+                    logger.error("No Redis URL found in environment variables")
+                    return
+                    
+                logger.info(f"Initializing Redis client with URL: {redis_url.split('@')[0]}@...")
+                
+                self.client = redis.asyncio.from_url(
+                    redis_url,
+                    decode_responses=True,
+                    socket_timeout=3.0,
+                    socket_connect_timeout=2.0,
+                    retry_on_timeout=True
+                )
+                logger.info("Redis client initialized")
             except Exception as e:
-                logger.error(f"Error closing Redis connection: {e}")
-
-async def get_thread_state(thread_id: str) -> Optional[Dict[str, Any]]:
-    """Get thread state from Redis with memory fallback."""
-    if not thread_id:
-        logger.warning("get_thread_state called with empty thread_id")
-        return None
-        
-    key = f"{RedisKeyPrefix.THREAD_STATE}:{thread_id}"
+                logger.error(f"Error initializing Redis client: {e}")
+                logger.error(traceback.format_exc())
     
-    try:
-        client = await get_redis_client()
-        if client:
-            value = await client.get(key)
-            await client.close()
-            if value:
-                try:
-                    return json.loads(value)
-                except json.JSONDecodeError:
-                    logger.error(f"Error decoding JSON for {key}")
-                    return None
+    async def get(self, key: str) -> Optional[Any]:
+        """
+        Get a value from Redis.
+        Falls back to memory cache if Redis is unavailable.
         
-        # Memory fallback
-        if key in _memory_cache:
-            logger.info(f"Using memory cache for key {key}")
-            return _memory_cache[key]
-    except Exception as e:
-        logger.error(f"Error getting thread state: {e}")
-    
-    return None
-
-async def save_thread_state(thread_id: str, state: Dict[str, Any]) -> bool:
-    """Save thread state to Redis with memory fallback."""
-    if not thread_id:
-        logger.warning("save_thread_state called with empty thread_id")
-        return False
+        Args:
+            key: The key to retrieve
+            
+        Returns:
+            The value if found, or None
+        """
+        if not key:
+            logger.warning("Attempted to get with empty key")
+            return None
+            
+        logger.debug(f"Getting value for key: {key}")
         
-    key = f"{RedisKeyPrefix.THREAD_STATE}:{thread_id}"
-    
-    try:
-        # Serialize state - handle non-serializable objects with default=str
-        value = json.dumps(state, default=str)
-        
-        # Try Redis first
-        client = await get_redis_client()
-        if client:
-            await client.set(key, value, ex=THREAD_STATE_EXPIRATION)
-            await client.close()
-            logger.info(f"Saved thread state to Redis for {thread_id}")
-        
-        # Always update memory cache
-        _memory_cache[key] = state
-        logger.info(f"Saved thread state to memory cache for {thread_id}")
-        return True
-    except Exception as e:
-        logger.error(f"Error saving thread state: {e}")
-        return False
-
-async def delete_thread_state(thread_id: str) -> bool:
-    """Delete thread state from Redis and memory cache."""
-    if not thread_id:
-        logger.warning("delete_thread_state called with empty thread_id")
-        return False
-        
-    key = f"{RedisKeyPrefix.THREAD_STATE}:{thread_id}"
-    
-    try:
-        # Try Redis first
-        client = await get_redis_client()
-        if client:
-            await client.delete(key)
-            await client.close()
-            logger.info(f"Deleted thread state from Redis for {thread_id}")
-        
-        # Always clean memory cache
-        if key in _memory_cache:
-            del _memory_cache[key]
-            logger.info(f"Deleted thread state from memory cache for {thread_id}")
-        return True
-    except Exception as e:
-        logger.error(f"Error deleting thread state: {e}")
-        return False
-
-# Add required functions needed by routine_db.py
-async def add_event_to_thread(thread_id: str, event_key: str) -> bool:
-    """Add an event key to a thread's events list."""
-    if not thread_id or not event_key:
-        logger.warning("add_event_to_thread called with empty parameters")
-        return False
-        
-    key = f"{RedisKeyPrefix.THREAD_EVENTS}:{thread_id}"
-    
-    try:
-        client = await get_redis_client()
-        if client:
-            await client.rpush(key, event_key)
-            await client.close()
-            logger.info(f"Added event {event_key} to thread {thread_id}")
-        return True
-    except Exception as e:
-        logger.error(f"Error adding event to thread: {e}")
-        return False
-
-async def list_append(key: str, value: str) -> bool:
-    """Append a value to a Redis list."""
-    try:
-        client = await get_redis_client()
-        if client:
-            await client.rpush(key, value)
-            await client.close()
-            logger.info(f"Appended value to list {key}")
-        return True
-    except Exception as e:
-        logger.error(f"Error appending to list: {e}")
-        return False
-
-# Backward compatibility functions
-async def get_with_fallback(key: str, default=None):
-    """Get a value from Redis with fallback to memory cache."""
-    try:
-        client = await get_redis_client()
-        if client:
-            value = await client.get(key)
-            await client.close()
-            if value:
-                try:
-                    return json.loads(value)
-                except json.JSONDecodeError:
+        try:
+            if self.client:
+                # Try to get from Redis
+                value = await self.client.get(key)
+                
+                if value is not None:
+                    logger.debug(f"Got value from Redis for key: {key}")
+                    
+                    # Try to parse JSON if it looks like JSON
+                    if isinstance(value, str) and value.startswith('{') and value.endswith('}'):
+                        try:
+                            return json.loads(value)
+                        except json.JSONDecodeError:
+                            return value
                     return value
-        
-        # Memory fallback
-        if key in _memory_cache:
-            logger.info(f"Using memory cache for key {key}")
-            return _memory_cache[key]
-    except Exception as e:
-        logger.error(f"Error getting value: {e}")
-    
-    return default
-
-async def set_with_fallback(key: str, value: Any, expiry: int = None) -> bool:
-    """Set a value in Redis with fallback to memory cache."""
-    try:
-        # Serialize value
-        serialized = json.dumps(value, default=str)
-        
-        # Try Redis first
-        client = await get_redis_client()
-        if client:
-            if expiry:
-                await client.setex(key, expiry, serialized)
+                else:
+                    logger.debug(f"No value found in Redis for key: {key}")
             else:
-                await client.set(key, serialized)
-            await client.close()
-            logger.info(f"Set value in Redis for key {key}")
+                logger.warning("Redis client not available")
+        except Exception as e:
+            logger.error(f"Error getting value from Redis for key {key}: {e}")
+        
+        # Fall back to memory cache
+        if key in _memory_cache:
+            logger.info(f"Using memory cache fallback for key: {key}")
+            return _memory_cache.get(key)
+        
+        logger.debug(f"No value found for key: {key}")
+        return None
+    
+    async def set(self, key: str, value: Any, expiration: Optional[int] = None) -> bool:
+        """
+        Set a value in Redis.
+        Always updates memory cache regardless of Redis availability.
+        
+        Args:
+            key: The key to set
+            value: The value to store
+            expiration: Optional expiration time in seconds
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        if not key:
+            logger.warning("Attempted to set with empty key")
+            return False
+            
+        logger.debug(f"Setting value for key: {key}")
+        
+        # Convert complex objects to JSON strings for storage
+        if isinstance(value, (dict, list)):
+            value = json.dumps(value, default=str)
+        
+        success = False
+        try:
+            if self.client:
+                # Try to set in Redis
+                if expiration:
+                    await self.client.set(key, value, ex=expiration)
+                else:
+                    await self.client.set(key, value)
+                logger.debug(f"Value set in Redis for key: {key}")
+                success = True
+            else:
+                logger.warning("Redis client not available for setting value")
+        except Exception as e:
+            logger.error(f"Error setting value in Redis for key {key}: {e}")
         
         # Always update memory cache
-        _memory_cache[key] = value
-        logger.info(f"Set value in memory cache for key {key}")
-        return True
-    except Exception as e:
-        logger.error(f"Error setting value: {e}")
-        return False
-
-async def delete_with_fallback(key: str) -> bool:
-    """Delete a value from Redis with fallback to memory cache."""
-    try:
-        # Try Redis first
-        client = await get_redis_client()
-        if client:
-            await client.delete(key)
-            await client.close()
-            logger.info(f"Deleted value from Redis for key {key}")
+        try:
+            # For memory cache, store already parsed objects if possible
+            if isinstance(value, str) and value.startswith('{') and value.endswith('}'):
+                try:
+                    _memory_cache[key] = json.loads(value)
+                except json.JSONDecodeError:
+                    _memory_cache[key] = value
+            else:
+                _memory_cache[key] = value
+                
+            logger.debug(f"Value set in memory cache for key: {key}")
+            
+            # We consider it a success if at least the memory cache was updated
+            return True
+        except Exception as e:
+            logger.error(f"Error setting value in memory cache for key {key}: {e}")
+            return success
+    
+    async def delete(self, key: str) -> bool:
+        """
+        Delete a value from Redis.
+        Always tries to delete from memory cache regardless of Redis availability.
         
-        # Always clean memory cache
-        if key in _memory_cache:
-            del _memory_cache[key]
-            logger.info(f"Deleted value from memory cache for key {key}")
-        return True
-    except Exception as e:
-        logger.error(f"Error deleting value: {e}")
-        return False
-
-# Add the missing routine summary functions
-async def cache_routine_summary(thread_id: str, routine_type: str, summary: Dict[str, Any]) -> bool:
-    """Cache a routine summary."""
-    key = f"{RedisKeyPrefix.ROUTINE_SUMMARY}:{thread_id}:{routine_type}"
-    return await set_with_fallback(key, summary, ROUTINE_SUMMARY_EXPIRATION)
-
-async def get_cached_routine_summary(thread_id: str, routine_type: str) -> Optional[Dict[str, Any]]:
-    """Get a cached routine summary."""
-    key = f"{RedisKeyPrefix.ROUTINE_SUMMARY}:{thread_id}:{routine_type}"
-    return await get_with_fallback(key)
-
-# Recent events caching
-async def cache_recent_events(thread_id: str, routine_type: str, events: List[Dict[str, Any]]) -> bool:
-    """Cache recent events."""
-    key = f"{RedisKeyPrefix.RECENT_EVENTS}:{thread_id}:{routine_type}"
-    return await set_with_fallback(key, events, RECENT_EVENTS_EXPIRATION)
-
-async def get_cached_recent_events(thread_id: str, routine_type: str) -> Optional[List[Dict[str, Any]]]:
-    """Get cached recent events."""
-    key = f"{RedisKeyPrefix.RECENT_EVENTS}:{thread_id}:{routine_type}"
-    return await get_with_fallback(key)
-
-# Active routine caching
-async def cache_active_routine(thread_id: str, routine_type: str, active: bool) -> bool:
-    """Cache active routine status."""
-    key = f"{RedisKeyPrefix.ACTIVE_ROUTINE}:{thread_id}:{routine_type}"
-    return await set_with_fallback(key, {"active": active}, ACTIVE_ROUTINE_EXPIRATION)
-
-async def get_active_routine(thread_id: str, routine_type: str) -> bool:
-    """Get active routine status."""
-    key = f"{RedisKeyPrefix.ACTIVE_ROUTINE}:{thread_id}:{routine_type}"
-    result = await get_with_fallback(key)
-    return result.get("active", False) if result else False
-
-# Cache invalidation
-async def invalidate_routine_cache(thread_id: str) -> bool:
-    """Invalidate all routine cache entries for a thread."""
-    success = True
-    # Delete all related cache entries
-    for prefix in [RedisKeyPrefix.ROUTINE_SUMMARY, RedisKeyPrefix.RECENT_EVENTS, RedisKeyPrefix.ACTIVE_ROUTINE]:
-        sleep_key = f"{prefix}:{thread_id}:sleep"
-        feeding_key = f"{prefix}:{thread_id}:feeding"
+        Args:
+            key: The key to delete
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        if not key:
+            logger.warning("Attempted to delete with empty key")
+            return False
+            
+        logger.debug(f"Deleting key: {key}")
         
-        if not await delete_with_fallback(sleep_key):
-            success = False
-        if not await delete_with_fallback(feeding_key):
-            success = False
-    
-    return success
+        success = False
+        try:
+            if self.client:
+                # Try to delete from Redis
+                await self.client.delete(key)
+                logger.debug(f"Key deleted from Redis: {key}")
+                success = True
+            else:
+                logger.warning("Redis client not available for deleting key")
+        except Exception as e:
+            logger.error(f"Error deleting key from Redis: {key}, error: {e}")
+        
+        # Always try to delete from memory cache
+        try:
+            if key in _memory_cache:
+                del _memory_cache[key]
+                logger.debug(f"Key deleted from memory cache: {key}")
+                
+            # We consider it a success if at least we got here without errors
+            return True
+        except Exception as e:
+            logger.error(f"Error deleting key from memory cache: {key}, error: {e}")
+            return success
+            
+    async def exists(self, key: str) -> bool:
+        """
+        Check if a key exists in Redis.
+        Falls back to memory cache if Redis is unavailable.
+        
+        Args:
+            key: The key to check
+            
+        Returns:
+            True if the key exists, False otherwise
+        """
+        if not key:
+            logger.warning("Attempted to check existence with empty key")
+            return False
+            
+        logger.debug(f"Checking if key exists: {key}")
+        
+        try:
+            if self.client:
+                # Try to check in Redis
+                exists = await self.client.exists(key)
+                logger.debug(f"Key {key} exists in Redis: {exists}")
+                return exists == 1
+            else:
+                logger.warning("Redis client not available for checking key existence")
+        except Exception as e:
+            logger.error(f"Error checking if key exists in Redis: {key}, error: {e}")
+        
+        # Fall back to memory cache
+        exists = key in _memory_cache
+        logger.debug(f"Key {key} exists in memory cache: {exists}")
+        return exists
 
-# Thread events list operations
-async def get_thread_events(thread_id: str) -> List[str]:
-    """Get all event keys for a thread."""
-    events = []
-    
-    try:
-        client = await get_redis_client()
-        if client:
-            # Get all event keys for this thread
-            thread_events_key = f"{RedisKeyPrefix.THREAD_EVENTS}:{thread_id}"
-            event_keys = await client.lrange(thread_events_key, 0, -1)
-            await client.close()
-            events = event_keys or []
-    except Exception as e:
-        logger.error(f"Error retrieving thread events for {thread_id}: {e}")
-    
-    return events
+    async def ping(self) -> bool:
+        """
+        Check if Redis is responsive.
+        
+        Returns:
+            True if Redis responds to ping, False otherwise
+        """
+        try:
+            if self.client:
+                response = await self.client.ping()
+                return response
+            return False
+        except Exception as e:
+            logger.error(f"Error pinging Redis: {e}")
+            return False
 
-# Add functions for routine events if needed
-# ... 
+# Create a singleton instance
+redis_service = RedisService()
 
-# Add get_redis function referenced in routine_tracker.py
-async def get_redis():
-    """
-    Get a Redis connection.
-    This is a convenience function that returns the redis_connection context manager.
-    
-    Usage:
-        async with get_redis() as client:
-            # Use Redis client
-            await client.get("my_key")
-    """
-    logger.debug("Creating Redis connection via get_redis()")
-    return redis_connection() 
+# Convenience functions that use the service
+async def get_redis(key: str) -> Optional[Any]:
+    """Get a value from Redis."""
+    return await redis_service.get(key)
 
-# We maintain the function signature but delegate to compatibility layer
-async def initialize_redis() -> bool:
-    """Initialize Redis (just a connection test for serverless environments)."""
-    client = await get_redis_client()
-    if client:
-        await client.close()
-        return True
-    return False
+async def set_redis(key: str, value: Any, expiration: Optional[int] = None) -> bool:
+    """Set a value in Redis."""
+    return await redis_service.set(key, value, expiration)
 
-async def ensure_redis_initialized() -> bool:
-    """Ensure Redis is initialized (alias for initialize_redis)."""
-    return await initialize_redis() 
+async def delete_redis(key: str) -> bool:
+    """Delete a value from Redis."""
+    return await redis_service.delete(key)
+
+async def exists_redis(key: str) -> bool:
+    """Check if a key exists in Redis."""
+    return await redis_service.exists(key)
+
+async def ping_redis() -> bool:
+    """Check if Redis is responsive."""
+    return await redis_service.ping() 

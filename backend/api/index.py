@@ -11,6 +11,8 @@ import contextlib
 from pathlib import Path
 from datetime import datetime, timezone, timedelta
 from typing import Dict, List, Optional, Any, Union, AsyncGenerator
+import time
+import uuid
 
 
 # Set up logging
@@ -41,7 +43,6 @@ from fastapi.responses import JSONResponse, HTMLResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
-import uuid
 
 # Import compatibility patches
 from backend.api.compatibility import apply_all_patches
@@ -97,90 +98,59 @@ REDIS_URL = os.environ.get("STORAGE_URL", "redis://localhost:6379/0")
 # In-memory fallback cache when Redis is unavailable
 _memory_cache = {}
 
+# Local Backend imports - Redis
+from backend.services.redis_service import (
+    redis_service,
+    get_redis,
+    set_redis,
+    delete_redis,
+    exists_redis,
+    ping_redis,
+)
+
 @contextlib.asynccontextmanager
-async def redis_connection() -> AsyncGenerator[Optional[redis.asyncio.Redis], None]:
+async def redis_connection():
     """
-    Context manager for Redis connections to ensure proper cleanup.
+    Context manager for Redis connections with improved logging and fallbacks.
     
-    This creates a completely isolated connection for a single operation
-    and guarantees it will be properly closed regardless of success or failure.
-    
-    Usage:
-        async with redis_connection() as redis:
-            if redis:
-                # Use redis connection here
-                await redis.get("my_key")
+    Wraps around redis_service to provide a client for compatibility with existing code.
+    Logs detailed information about the connection lifecycle.
     """
-    client = None
+    connection_id = str(uuid.uuid4())[:8]
+    start_time = time.time()
+    logger.info(f"[Redis:{connection_id}] Creating Redis connection via redis_service")
+    
     try:
-        # Ensure we have an event loop - in serverless environments, this might
-        # not be available during module initialization, but should be during request handling
-        try:
-            # Get the current event loop or create a new one if none exists
-            try:
-                loop = asyncio.get_running_loop()
-            except RuntimeError:
-                # No running event loop, create a new one if none exists
-                # This should only happen during testing or unusual scenarios
-                logger.warning("No running event loop found, creating a new one")
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-                
-            # Get Redis URL from environment or use default
-            redis_url = os.environ.get("STORAGE_URL", REDIS_URL)
-            if not redis_url:
-                logger.error("Redis URL not configured")
-                yield None
-                return
-                
-            # Connect to Redis with modern from_url method
-            client = await redis.asyncio.from_url(
-                redis_url,
-                decode_responses=True,
-                socket_timeout=3.0,  # Short timeout for serverless
-                socket_connect_timeout=2.0,
-                retry_on_timeout=True
-            )
-            
-            try:
-                # Validate connection with ping
-                await client.ping()
-                # Connection is valid, yield it to the caller
-                yield client
-            except Exception as e:
-                # Connection failed validation
-                logger.error(f"Redis connection validation failed: {e}")
-                if client:
-                    try:
-                        await client.close()
-                    except Exception as ex:
-                        logger.warning(f"Error closing invalid Redis connection: {ex}")
-                    client = None
-                yield None
-        except Exception as e:
-            logger.error(f"Event loop error: {e}")
+        # Just return the client from redis_service
+        if redis_service.client is not None:
+            logger.info(f"[Redis:{connection_id}] Providing existing redis client from redis_service")
+            yield redis_service.client
+        else:
+            logger.warning(f"[Redis:{connection_id}] Redis client not available from redis_service")
             yield None
             
     except Exception as e:
         # Connection creation failed
-        logger.error(f"Error creating Redis connection: {e}")
+        logger.error(f"[Redis:{connection_id}] Error providing Redis connection: {e}")
         yield None
     finally:
-        # Always ensure the connection is properly closed
-        if client:
-            try:
-                await client.close()
-            except Exception as e:
-                # Log but don't re-raise - we don't want cleanup errors to propagate
-                logger.warning(f"Error closing Redis connection: {e}")
+        duration = time.time() - start_time
+        logger.info(f"[Redis:{connection_id}] Redis connection operation completed in {duration:.2f}s")
 
 async def test_redis_connection() -> bool:
     """Test that Redis connection is working."""
+    connection_id = str(uuid.uuid4())[:8]
+    start_time = time.time()
+    logger.info(f"[Redis:{connection_id}] Testing Redis connection")
+    
     try:
-        async with redis_connection() as client:
-            return client is not None
+        result = await ping_redis()
+        duration = time.time() - start_time
+        logger.info(f"[Redis:{connection_id}] Redis connection test {'succeeded' if result else 'failed'} in {duration:.2f}s")
+        return result
     except Exception as e:
-        logger.error(f"Redis connection test failed: {e}")
+        duration = time.time() - start_time
+        logger.error(f"[Redis:{connection_id}] Redis connection test failed in {duration:.2f}s: {e}")
         return False
 
 # Thread state functions
@@ -190,35 +160,37 @@ async def get_thread_state(thread_id: str) -> Optional[Dict[str, Any]]:
         logger.warning("get_thread_state called with empty thread_id")
         return None
         
+    operation_id = str(uuid.uuid4())[:8]
+    start_time = time.time()
     key = f"thread_state:{thread_id}"
     
-    # Try Redis first with better error handling
+    logger.info(f"[State:{operation_id}] Getting thread state for {thread_id}")
+    
+    # Try Redis first using our service
     try:
-        async with redis_connection() as client:
-            if client:
-                try:
-                    value = await client.get(key)
-                    if value:
-                        try:
-                            return json.loads(value)
-                        except json.JSONDecodeError as e:
-                            logger.error(f"Error decoding JSON for {key}: {e}")
-                            return None
-                except Exception as inner_e:
-                    logger.warning(f"Redis operation error for {key}: {inner_e}")
-            else:
-                logger.warning(f"Redis client not available for {key}")
+        state = await get_redis(key)
+        if state:
+            duration = time.time() - start_time
+            logger.info(f"[State:{operation_id}] Successfully retrieved thread state from Redis in {duration:.2f}s: {thread_id}")
+            return state
+        else:
+            logger.info(f"[State:{operation_id}] No state found in Redis for thread: {thread_id}")
     except Exception as e:
-        logger.warning(f"Redis connection error for {key}: {e}")
+        logger.warning(f"[State:{operation_id}] Redis error getting thread state for {thread_id}: {e}")
     
     # Fall back to memory cache
     try:
         if key in _memory_cache:
-            logger.info(f"Using memory cache fallback for {key}")
-            return _memory_cache.get(key)
+            logger.info(f"[State:{operation_id}] Using memory cache fallback for {key}")
+            state = _memory_cache.get(key)
+            duration = time.time() - start_time
+            logger.info(f"[State:{operation_id}] Retrieved thread state from memory cache in {duration:.2f}s: {thread_id}")
+            return state
     except Exception as cache_e:
-        logger.error(f"Memory cache error for {key}: {cache_e}")
+        logger.error(f"[State:{operation_id}] Memory cache error for {key}: {cache_e}")
     
+    duration = time.time() - start_time
+    logger.info(f"[State:{operation_id}] No thread state found in {duration:.2f}s: {thread_id}")
     return None
 
 async def save_thread_state(thread_id: str, state: Dict[str, Any]) -> bool:
@@ -231,7 +203,11 @@ async def save_thread_state(thread_id: str, state: Dict[str, Any]) -> bool:
         logger.warning(f"save_thread_state called with empty state for thread {thread_id}")
         return False
         
+    operation_id = str(uuid.uuid4())[:8]
+    start_time = time.time()
     key = f"thread_state:{thread_id}"
+    
+    logger.info(f"[State:{operation_id}] Saving thread state for {thread_id}")
     
     # Create a copy of the state for serialization
     serializable_state = state.copy()
@@ -250,16 +226,26 @@ async def save_thread_state(thread_id: str, state: Dict[str, Any]) -> bool:
             elif isinstance(msg, dict):
                 serializable_messages.append(msg)
             else:
-                logger.warning(f"Unknown message type: {type(msg)}")
+                logger.warning(f"[State:{operation_id}] Unknown message type: {type(msg)}")
         serializable_state["messages"] = serializable_messages
     
-    # Convert value to JSON with better error handling
+    # Try to save the state using our Redis service with expiration (24 hours)
     try:
-        value = json.dumps(serializable_state, default=str)  # Use default=str to handle non-serializable objects
-    except Exception as e:
-        logger.error(f"Error serializing state for {key}: {e}")
+        result = await set_redis(key, serializable_state, 86400)
+        if result:
+            duration = time.time() - start_time
+            logger.info(f"[State:{operation_id}] Successfully saved thread state in {duration:.2f}s: {thread_id}")
+        else:
+            logger.warning(f"[State:{operation_id}] Failed to save thread state: {thread_id}")
         
-        # Try with a simpler approach - just keep essential data
+        # Always update memory cache
+        _memory_cache[key] = serializable_state
+        
+        return result
+    except Exception as e:
+        logger.error(f"[State:{operation_id}] Error saving thread state for {thread_id}: {e}")
+        
+        # Try with a simpler approach if serialization fails
         try:
             # Extract just the essential data
             simplified_state = {
@@ -267,40 +253,22 @@ async def save_thread_state(thread_id: str, state: Dict[str, Any]) -> bool:
                 "timestamp": datetime.now(timezone.utc).isoformat(),
                 "context": state.get("context", {})
             }
-            value = json.dumps(simplified_state)
-            logger.info(f"Created simplified state for {thread_id}")
-        except Exception as e2:
-            logger.error(f"Error creating simplified state for {key}: {e2}")
-            return False
-    
-    # Try Redis first with better error handling
-    redis_success = False
-    try:
-        async with redis_connection() as client:
-            if client:
-                try:
-                    await client.set(key, value, ex=86400)  # 24 hour expiration
-                    redis_success = True
-                    logger.info(f"Successfully saved thread state to Redis: {thread_id}")
-                except Exception as inner_e:
-                    logger.warning(f"Redis operation error for {key}: {inner_e}")
-            else:
-                logger.warning(f"Redis client not available for {key}")
-    except Exception as e:
-        logger.warning(f"Redis connection error for {key}: {e}")
-    
-    # Always update memory cache (regardless of Redis success)
-    try:
-        try:
-            _memory_cache[key] = json.loads(value)
-        except json.JSONDecodeError:
-            _memory_cache[key] = value
             
-        logger.info(f"Stored {key} in memory cache fallback")
-        return True
-    except Exception as e:
-        logger.error(f"Error setting {key} in memory cache: {e}")
-        return redis_success  # Return Redis result if memory cache fails
+            # Try saving the simplified state
+            result = await set_redis(key, simplified_state, 86400)
+            if result:
+                duration = time.time() - start_time
+                logger.info(f"[State:{operation_id}] Saved simplified thread state in {duration:.2f}s: {thread_id}")
+                _memory_cache[key] = simplified_state
+                return True
+            else:
+                logger.warning(f"[State:{operation_id}] Failed to save simplified thread state: {thread_id}")
+                return False
+        except Exception as e2:
+            logger.error(f"[State:{operation_id}] Error creating simplified state for {thread_id}: {e2}")
+            duration = time.time() - start_time
+            logger.error(f"[State:{operation_id}] Thread state save failed in {duration:.2f}s: {thread_id}")
+            return False
 
 # Import custom modules
 try:
@@ -1461,24 +1429,227 @@ async def warmup():
     Warmup endpoint to reduce cold start impact.
     This loads key components but doesn't execute expensive operations.
     """
-    logger.info("Warmup endpoint called")
+    warmup_id = str(uuid.uuid4())[:8]
+    start_time = time.time()
+    logger.info(f"[Warmup:{warmup_id}] Warmup endpoint called")
+    
+    results = {
+        "status": "ready",
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "components": {}
+    }
     
     try:
         # Test Redis connection (lightweight operation)
-        redis_available = await test_redis_connection()
+        logger.info(f"[Warmup:{warmup_id}] Testing Redis connection")
+        redis_start = time.time()
+        redis_available = await ping_redis()
+        redis_duration = time.time() - redis_start
+        
+        results["components"]["redis"] = {
+            "status": "available" if redis_available else "unavailable",
+            "duration_seconds": redis_duration
+        }
+        
+        logger.info(f"[Warmup:{warmup_id}] Redis connection test {'succeeded' if redis_available else 'failed'} in {redis_duration:.2f}s")
         
         # Pre-initialize workflow (but don't run it)
-        _ = await get_workflow()
+        logger.info(f"[Warmup:{warmup_id}] Pre-initializing workflow")
+        workflow_start = time.time()
+        try:
+            workflow = await get_workflow()
+            workflow_duration = time.time() - workflow_start
+            
+            results["components"]["workflow"] = {
+                "status": "initialized",
+                "duration_seconds": workflow_duration
+            }
+            
+            logger.info(f"[Warmup:{warmup_id}] Workflow initialized in {workflow_duration:.2f}s")
+        except Exception as e:
+            workflow_duration = time.time() - workflow_start
+            logger.error(f"[Warmup:{warmup_id}] Workflow initialization failed: {e}")
+            
+            results["components"]["workflow"] = {
+                "status": "error",
+                "error": str(e),
+                "duration_seconds": workflow_duration
+            }
         
-        # Return status
-        return JSONResponse({
-            "status": "ready",
-            "redis_available": redis_available,
-            "timestamp": datetime.now(timezone.utc).isoformat()
-        })
+        # Test backend module imports
+        logger.info(f"[Warmup:{warmup_id}] Testing backend module imports")
+        modules_start = time.time()
+        modules_available = {
+            "workflow": False,
+            "services": False,
+            "db": False
+        }
+        
+        try:
+            import backend.workflow.workflow
+            modules_available["workflow"] = True
+        except Exception as e:
+            logger.warning(f"[Warmup:{warmup_id}] backend.workflow.workflow import failed: {e}")
+            
+        try:
+            import backend.services.redis_service
+            modules_available["services"] = True
+        except Exception as e:
+            logger.warning(f"[Warmup:{warmup_id}] backend.services.redis_service import failed: {e}")
+            
+        try:
+            import backend.db.routine_db
+            modules_available["db"] = True
+        except Exception as e:
+            logger.warning(f"[Warmup:{warmup_id}] backend.db.routine_db import failed: {e}")
+            
+        modules_duration = time.time() - modules_start
+        
+        results["components"]["modules"] = {
+            "status": "available" if all(modules_available.values()) else "partial",
+            "available": modules_available,
+            "duration_seconds": modules_duration
+        }
+        
+        logger.info(f"[Warmup:{warmup_id}] Module imports tested in {modules_duration:.2f}s")
+        
+        # Calculate overall status
+        if all(component.get("status") in ["available", "initialized", "ready"] 
+               for component in results["components"].values()):
+            results["status"] = "ready"
+        elif any(component.get("status") == "error" for component in results["components"].values()):
+            results["status"] = "error"
+        else:
+            results["status"] = "degraded"
+            
+        # Calculate total duration
+        total_duration = time.time() - start_time
+        results["duration_seconds"] = total_duration
+        
+        logger.info(f"[Warmup:{warmup_id}] Warmup completed in {total_duration:.2f}s with status: {results['status']}")
+        return JSONResponse(results)
     except Exception as e:
-        logger.error(f"Error during warmup: {str(e)}")
+        total_duration = time.time() - start_time
+        logger.error(f"[Warmup:{warmup_id}] Warmup failed in {total_duration:.2f}s: {e}")
         return JSONResponse({
             "status": "error",
-            "error": str(e)
+            "error": str(e),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "duration_seconds": total_duration
         }, status_code=500)
+
+async def get_redis_diagnostics() -> Dict[str, Any]:
+    """
+    Get detailed diagnostics information about the Redis connection.
+    Tests various Redis operations and returns performance metrics.
+    """
+    diagnostics_id = str(uuid.uuid4())[:8]
+    start_time = time.time()
+    logger.info(f"[Redis:{diagnostics_id}] Running Redis diagnostics")
+    
+    results = {
+        "status": "unknown",
+        "operations": {},
+        "duration_seconds": 0
+    }
+    
+    # Test Redis connection
+    try:
+        # Try ping first
+        logger.info(f"[Redis:{diagnostics_id}] Testing Redis ping")
+        ping_start = time.time()
+        ping_result = await ping_redis()
+        ping_duration = time.time() - ping_start
+        
+        results["operations"]["ping"] = {
+            "success": ping_result,
+            "duration_seconds": ping_duration
+        }
+        
+        if ping_result:
+            logger.info(f"[Redis:{diagnostics_id}] Redis ping successful in {ping_duration:.3f}s")
+            results["status"] = "connected"
+            
+            # Test key operations if ping was successful
+            try:
+                logger.info(f"[Redis:{diagnostics_id}] Testing Redis key operations")
+                test_key = f"test:diagnostics:{diagnostics_id}"
+                test_value = {"timestamp": datetime.now(timezone.utc).isoformat(), "test": True}
+                
+                # Test set
+                set_start = time.time()
+                set_result = await set_redis(test_key, test_value, 60)  # 60 second expiration
+                set_duration = time.time() - set_start
+                
+                results["operations"]["set"] = {
+                    "success": set_result,
+                    "duration_seconds": set_duration
+                }
+                
+                # Test get
+                get_start = time.time()
+                get_result = await get_redis(test_key)
+                get_duration = time.time() - get_start
+                
+                results["operations"]["get"] = {
+                    "success": get_result is not None and get_result.get("test") is True,
+                    "duration_seconds": get_duration
+                }
+                
+                # Test delete
+                delete_start = time.time()
+                delete_result = await delete_redis(test_key)
+                delete_duration = time.time() - delete_start
+                
+                results["operations"]["delete"] = {
+                    "success": delete_result,
+                    "duration_seconds": delete_duration
+                }
+                
+                logger.info(f"[Redis:{diagnostics_id}] Key operations test completed")
+            except Exception as e:
+                logger.error(f"[Redis:{diagnostics_id}] Error testing key operations: {e}")
+                results["operations"]["key_ops_error"] = str(e)
+            
+            # Try to get Redis server info if available
+            try:
+                logger.info(f"[Redis:{diagnostics_id}] Getting Redis server info")
+                
+                if redis_service.client:
+                    info_start = time.time()
+                    server_info = await redis_service.client.info()
+                    info_duration = time.time() - info_start
+                    
+                    # Extract version and memory info
+                    results["server"] = {
+                        "version": server_info.get("redis_version", "unknown"),
+                        "uptime_seconds": server_info.get("uptime_in_seconds", 0),
+                        "memory_used_bytes": server_info.get("used_memory", 0),
+                        "clients_connected": server_info.get("connected_clients", 0)
+                    }
+                    
+                    results["operations"]["info"] = {
+                        "success": True,
+                        "duration_seconds": info_duration
+                    }
+                    
+                    logger.info(f"[Redis:{diagnostics_id}] Got Redis server info in {info_duration:.3f}s")
+            except Exception as e:
+                logger.error(f"[Redis:{diagnostics_id}] Error getting Redis server info: {e}")
+                results["operations"]["info_error"] = str(e)
+        else:
+            logger.error(f"[Redis:{diagnostics_id}] Redis ping failed")
+            results["status"] = "disconnected"
+    except Exception as e:
+        logger.error(f"[Redis:{diagnostics_id}] Redis diagnostics error: {e}")
+        logger.error(traceback.format_exc())
+        results["status"] = "error"
+        results["error"] = str(e)
+        results["traceback"] = traceback.format_exc().split("\n")[-5:]
+    
+    # Calculate total duration
+    total_duration = time.time() - start_time
+    results["duration_seconds"] = total_duration
+    
+    logger.info(f"[Redis:{diagnostics_id}] Redis diagnostics completed in {total_duration:.3f}s")
+    return results
