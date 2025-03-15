@@ -39,6 +39,9 @@
     "env": {
         "PYTHONPATH": ".",
         "PYTHONUNBUFFERED": "1",
-        "STORAGE_URL": "redis://default:SKNzsYzhLZ3eInH78gk7EWYEtIlRf4fd@redis-10101.c135.eu-central-1-1.ec2.redns.redis-cloud.com:10101"
+        "STORAGE_URL": "redis://default:SKNzsYzhLZ3eInH78gk7EWYEtIlRf4fd@redis-10101.c135.eu-central-1-1.ec2.redns.redis-cloud.com:10101",
+        "VERCEL_KV_URL": "redis://default:SKNzsYzhLZ3eInH78gk7EWYEtIlRf4fd@redis-10101.c135.eu-central-1-1.ec2.redns.redis-cloud.com:10101",
+        "VERCEL_KV_REST_API_URL": "https://redis-10101.c135.eu-central-1-1.ec2.redns.redis-cloud.com:10101",
+        "VERCEL_KV_REST_API_TOKEN": "SKNzsYzhLZ3eInH78gk7EWYEtIlRf4fd"
     }
 } 
