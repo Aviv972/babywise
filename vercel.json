@@ -10,10 +10,13 @@
                 "includeFiles": [
                     "minimal_api.py",
                     "minimal-requirements.txt",
-                    "static/images/**",
                     "frontend/index.html",
-                    "frontend/css/**",
-                    "frontend/js/**"
+                    "frontend/*.js",
+                    "frontend/*.css",
+                    "frontend/*.svg",
+                    "static/images/**",
+                    "static/css/**",
+                    "static/js/**"
                 ],
                 "excludeFiles": [
                     "**/*.md",
@@ -45,6 +48,10 @@
         }
     ],
     "routes": [
+        { "src": "/favicon.svg", "dest": "/frontend/favicon.svg" },
+        { "src": "/baby-icon.svg", "dest": "/frontend/baby-icon.svg" },
+        { "src": "/style.css", "dest": "/frontend/style.css" },
+        { "src": "/script.js", "dest": "/frontend/script.js" },
         { "src": "/static/(.*)", "dest": "/static/$1" },
         { "src": "/api/health", "dest": "/minimal_api.py" },
         { "src": "/api/redis-test", "dest": "/minimal_api.py" },

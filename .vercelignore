@@ -5,10 +5,18 @@
 !minimal_api.py
 !minimal-requirements.txt
 !vercel.json
-!static/images/**
 !frontend/index.html
-!frontend/css/**
-!frontend/js/**
+!frontend/*.js
+!frontend/*.css
+!frontend/*.svg
+!frontend/favicon.svg
+!frontend/baby-icon.svg
+!frontend/style.css
+!frontend/script.js
+!static/images/**
+!static/css/**
+!static/js/**
+!static/frontend/**
 
 # Development and testing files
 tests/
