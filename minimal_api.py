@@ -4,10 +4,13 @@
 import os
 import json
 import logging
-from typing import Dict, Optional, Any
-from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse
+from typing import Dict, Optional, Any, List
+from fastapi import FastAPI, Request, Response, HTTPException
+from fastapi.responses import JSONResponse, HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+import time
+from datetime import datetime
 
 # Set up logging
 logging.basicConfig(
@@ -36,9 +39,10 @@ _memory_cache = {}
 @app.get("/api/health")
 async def health_check():
     """Basic health check endpoint"""
+    logger.info("Health check requested")
     return {
         "status": "ok",
-        "timestamp": "2024-03-15T12:00:00Z",
+        "timestamp": datetime.now().isoformat(),
         "environment": {
             "python_version": "3.12",
         }
@@ -48,37 +52,141 @@ async def health_check():
 @app.post("/api/chat")
 async def chat(request: Request):
     """Minimal chat endpoint that returns a static response"""
-    body = await request.json()
-    message = body.get("message", "")
-    thread_id = body.get("thread_id", "thread_12345")
+    try:
+        body = await request.json()
+        message = body.get("message", "")
+        thread_id = body.get("thread_id", "thread_12345")
 
-    # Log the received message
-    logger.info(f"Received message: {message} for thread: {thread_id}")
-    
-    # In a real implementation, this would call the LangChain workflow
-    # but for deployment testing we'll return a static response
-    return {
-        "response": "This is a minimal API deployment test. The full AI processing is temporarily unavailable while we optimize the deployment.",
-        "thread_id": thread_id
-    }
+        # Log the received message
+        logger.info(f"Received message: {message} for thread: {thread_id}")
+        
+        # Return a static response based on the message content
+        if "סיכום" in message or "summary" in message.lower():
+            return {
+                "response": "זהו API מינימלי לבדיקת פריסה. סיכומי השגרה אינם זמינים כרגע בזמן שאנו מייעלים את הפריסה. נסה שוב מאוחר יותר.",
+                "thread_id": thread_id
+            }
+        elif "שינה" in message or "sleep" in message.lower():
+            return {
+                "response": "זהו API מינימלי לבדיקת פריסה. מעקב שינה אינו זמין כרגע בזמן שאנו מייעלים את הפריסה. נסה שוב מאוחר יותר.",
+                "thread_id": thread_id 
+            }
+        elif "האכלה" in message or "feed" in message.lower():
+            return {
+                "response": "זהו API מינימלי לבדיקת פריסה. מעקב האכלה אינו זמין כרגע בזמן שאנו מייעלים את הפריסה. נסה שוב מאוחר יותר.",
+                "thread_id": thread_id
+            }
+        else:
+            return {
+                "response": "זהו API מינימלי לבדיקת פריסה. המערכת האינטליגנטית המלאה אינה זמינה כרגע בזמן שאנו מייעלים את הפריסה. נסה שוב מאוחר יותר.",
+                "thread_id": thread_id
+            }
+    except Exception as e:
+        logger.error(f"Error in chat endpoint: {str(e)}")
+        return HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+
+# Chat reset endpoint
+@app.post("/api/chat/reset")
+async def reset_chat(request: Request):
+    """Reset chat endpoint"""
+    try:
+        body = await request.json()
+        thread_id = body.get("thread_id", "thread_12345")
+        logger.info(f"Reset chat for thread: {thread_id}")
+        return {
+            "status": "ok",
+            "message": "Chat reset successful (minimal API)",
+            "thread_id": thread_id
+        }
+    except Exception as e:
+        logger.error(f"Error in reset chat endpoint: {str(e)}")
+        return HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+
+# Context endpoint
+@app.get("/api/chat/context")
+async def get_context(request: Request):
+    """Get context endpoint"""
+    try:
+        thread_id = request.query_params.get("thread_id", "thread_12345")
+        logger.info(f"Get context for thread: {thread_id}")
+        return {
+            "context": [],
+            "thread_id": thread_id
+        }
+    except Exception as e:
+        logger.error(f"Error in get context endpoint: {str(e)}")
+        return HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+
+# Routine events endpoint
+@app.post("/api/routines/events")
+async def add_routine_event(request: Request):
+    """Add routine event endpoint"""
+    try:
+        body = await request.json()
+        thread_id = body.get("thread_id", "thread_12345")
+        event_type = body.get("event_type", "unknown")
+        logger.info(f"Add routine event for thread: {thread_id}, type: {event_type}")
+        return {
+            "status": "ok", 
+            "message": "Event added successfully (minimal API)",
+            "event_id": f"mock_{int(time.time())}",
+            "thread_id": thread_id
+        }
+    except Exception as e:
+        logger.error(f"Error in add routine event endpoint: {str(e)}")
+        return HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+
+@app.get("/api/routines/events")
+async def get_routine_events(request: Request):
+    """Get routine events endpoint"""
+    try:
+        thread_id = request.query_params.get("thread_id", "thread_12345")
+        logger.info(f"Get routine events for thread: {thread_id}")
+        return {
+            "events": [],
+            "thread_id": thread_id
+        }
+    except Exception as e:
+        logger.error(f"Error in get routine events endpoint: {str(e)}")
+        return HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+
+@app.get("/api/routines/summary/{thread_id}")
+async def get_routine_summary(thread_id: str, request: Request):
+    """Get routine summary endpoint"""
+    try:
+        period = request.query_params.get("period", "day")
+        logger.info(f"Get routine summary for thread: {thread_id}, period: {period}")
+        return {
+            "summary": {
+                "sleep": [],
+                "feed": [],
+                "total_sleep_minutes": 0,
+                "total_feed_count": 0,
+                "period": period
+            },
+            "thread_id": thread_id
+        }
+    except Exception as e:
+        logger.error(f"Error in get routine summary endpoint: {str(e)}")
+        return HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
 # Root path handler
-@app.get("/")
+@app.get("/", response_class=HTMLResponse)
 async def root():
     """Return a simple HTML page"""
     html_content = """
     <!DOCTYPE html>
     <html>
     <head>
-        <title>Babywise Assistant API - Minimal Version</title>
+        <meta http-equiv="refresh" content="0;url=/index.html">
+        <title>Redirecting...</title>
     </head>
     <body>
-        <h1>Babywise Assistant API - Minimal Version</h1>
-        <p>This is a minimal version of the API for deployment testing.</p>
+        <p>Redirecting to app...</p>
     </body>
     </html>
     """
-    return html_content
+    return HTMLResponse(content=html_content)
 
 # Redis test endpoint
 @app.get("/api/redis-test")
@@ -100,6 +208,13 @@ async def redis_test():
     except Exception as e:
         logger.error(f"Redis test error: {str(e)}")
         return {"status": "error", "message": f"Redis connection failed: {str(e)}"}
+
+# Mount static files for local development
+try:
+    app.mount("/static", StaticFiles(directory="static"), name="static")
+    logger.info("Mounted static directory")
+except Exception as e:
+    logger.warning(f"Could not mount static directory: {str(e)}")
 
 # Enable direct running
 if __name__ == "__main__":

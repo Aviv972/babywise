@@ -46,12 +46,18 @@ const USE_SERVER_PY = true; // Set to true if using server.py, false if using uv
 const API_ENDPOINTS = {
     // Endpoints using the correct backend routes
     CHAT: `${API_BASE_URL}/api/chat`,
+    HEALTH: `${API_BASE_URL}/api/health`,
+    REDIS_TEST: `${API_BASE_URL}/api/redis-test`,
+    // The following endpoints are not available in the minimal API
+    // but we keep them in the code for future implementation
     RESET: `${API_BASE_URL}/api/chat/reset`,
     CONTEXT: `${API_BASE_URL}/api/chat/context`,
-    ROUTINE_EVENTS: `${API_BASE_URL}/api/routines/events`,
-    ROUTINE_SUMMARY: `${API_BASE_URL}/api/routines/summary`,
-    ROUTINE_LATEST: `${API_BASE_URL}/api/routines/events/latest`,
-    HEALTH: `${API_BASE_URL}/api/health`
+    ROUTINES: {
+        EVENTS: `${API_BASE_URL}/api/routines/events`,
+        SLEEP: `${API_BASE_URL}/api/routines/sleep`,
+        FEED: `${API_BASE_URL}/api/routines/feed`,
+        SUMMARY: `${API_BASE_URL}/api/routines/summary`
+    }
 };
 
 // Language detection function
@@ -701,8 +707,8 @@ async function fetchRoutineSummary(period = 'day') {
         showTypingIndicator();
         
         console.log(`Fetching routine summary for period: ${period}`);
-        console.log(`API endpoint: ${API_ENDPOINTS.ROUTINE_SUMMARY}/${threadId}?period=${period}`);
-        const response = await fetch(`${API_ENDPOINTS.ROUTINE_SUMMARY}/${threadId}?period=${period}`);
+        console.log(`API endpoint: ${API_ENDPOINTS.ROUTINES.SUMMARY}/${threadId}?period=${period}`);
+        const response = await fetch(`${API_ENDPOINTS.ROUTINES.SUMMARY}/${threadId}?period=${period}`);
         
         if (!response.ok) {
             console.error(`Error fetching routine summary: ${response.status} ${response.statusText}`);
@@ -1145,7 +1151,7 @@ async function fetchLatestEvents() {
         const endDate = now.toISOString();
         
         const response = await fetch(
-            `${API_ENDPOINTS.ROUTINE_EVENTS}?thread_id=${threadId}&start_date=${startDate}&end_date=${endDate}`
+            `${API_ENDPOINTS.ROUTINES.EVENTS}?thread_id=${threadId}&start_date=${startDate}&end_date=${endDate}`
         );
         
         if (!response.ok) {
@@ -1291,7 +1297,7 @@ async function syncLocalEvents() {
                 console.log(`Sending sleep event to server: ${JSON.stringify(payload)}`);
                 
                 // Send to server
-                const response = await fetch(API_ENDPOINTS.ROUTINE_EVENTS, {
+                const response = await fetch(API_ENDPOINTS.ROUTINES.EVENTS, {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json'
@@ -1379,7 +1385,7 @@ async function syncLocalEvents() {
                     
                     console.log(`Sending sleep_end event to server: ${JSON.stringify(eventData)}`);
                     
-                    const response = await fetch(API_ENDPOINTS.ROUTINE_EVENTS, {
+                    const response = await fetch(API_ENDPOINTS.ROUTINES.EVENTS, {
                         method: 'POST',
                         headers: {
                             'Content-Type': 'application/json'
@@ -1468,7 +1474,7 @@ async function syncLocalEvents() {
                 console.log(`Sending feed event to server: ${JSON.stringify(payload)}`);
                 
                 // Send to server
-                const response = await fetch(API_ENDPOINTS.ROUTINE_EVENTS, {
+                const response = await fetch(API_ENDPOINTS.ROUTINES.EVENTS, {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json'
