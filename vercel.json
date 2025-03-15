@@ -6,15 +6,25 @@
             "use": "@vercel/python",
             "config": {
                 "runtime": "python3.12",
-                "maxLambdaSize": "50mb",
+                "maxLambdaSize": "250mb",
                 "includeFiles": [
                     "backend/**",
                     "static/**",
                     "frontend/**"
                 ],
+                "excludeFiles": [
+                    "**/*.md",
+                    "**/*.pyc",
+                    "**/__pycache__/**",
+                    "tests/**",
+                    "**/*.test.py",
+                    ".git/**",
+                    ".github/**",
+                    ".vscode/**"
+                ],
                 "memory": 1024,
                 "maxDuration": 60,
-                "installCommand": "pip install -r requirements.txt"
+                "installCommand": "pip install -r requirements-prod.txt"
             }
         },
         {

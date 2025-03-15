@@ -1,10 +1,49 @@
-# Python cache files
+# Development and testing files
+tests/
+scripts/
+docs/
+.git/
+.github/
+.vscode/
+.pytest_cache/
 __pycache__/
-*.py[cod]
-*$py.class
+*.pyc
+*.pyo
+*.pyd
+.coverage
+htmlcov/
+.tox/
+.nox/
+.hypothesis/
+.egg-info/
+.eggs/
+*.egg
+*.egg-info/
+.cache/
 
 # Virtual environments
 venv/
 env/
 ENV/
+env.bak/
+venv.bak/
+
+# Environment files (except .env.example)
 .env
+.env.local
+.env.*
+!.env.example
+
+# Non-essential documentation
+*.md
+*.rst
+LICENSE*
+CHANGELOG*
+README*
+
+# Development dependencies
+**/*.spec
+**/*.test.js
+**/*.test.py
+**/*.test.tsx
+**/*.test.ts
