@@ -1,63 +1,22 @@
 {
     "version": 2,
-    "builds": [
-        {
-            "src": "minimal_api.py",
-            "use": "@vercel/python",
-            "config": {
-                "runtime": "python3.12",
-                "maxLambdaSize": "250mb",
-                "includeFiles": [
-                    "minimal_api.py",
-                    "minimal-requirements.txt",
-                    "frontend/index.html",
-                    "frontend/*.js",
-                    "frontend/*.css",
-                    "frontend/*.svg",
-                    "static/images/**",
-                    "static/css/**",
-                    "static/js/**"
-                ],
-                "excludeFiles": [
-                    "**/*.md",
-                    "**/*.pyc",
-                    "**/__pycache__/**",
-                    "tests/**",
-                    "**/*.test.py",
-                    ".git/**",
-                    ".github/**",
-                    ".vscode/**",
-                    "**/*test*/**",
-                    "**/node_modules/**",
-                    "**/.DS_Store",
-                    "**/.git*",
-                    "backend/**"
-                ],
-                "memory": 1024,
-                "maxDuration": 60,
-                "installCommand": "pip install --no-cache-dir -r minimal-requirements.txt"
-            }
-        },
-        {
-            "src": "frontend/**",
-            "use": "@vercel/static"
-        },
-        {
-            "src": "static/**",
-            "use": "@vercel/static"
+    "functions": {
+        "api/*.py": {
+            "runtime": "python3.12",
+            "memory": 1024,
+            "maxDuration": 60
         }
-    ],
+    },
     "routes": [
+        { "src": "/favicon.ico", "dest": "/frontend/favicon.ico" },
         { "src": "/favicon.svg", "dest": "/frontend/favicon.svg" },
         { "src": "/baby-icon.svg", "dest": "/frontend/baby-icon.svg" },
         { "src": "/style.css", "dest": "/frontend/style.css" },
         { "src": "/script.js", "dest": "/frontend/script.js" },
         { "src": "/static/(.*)", "dest": "/static/$1" },
-        { "src": "/api/health", "dest": "/minimal_api.py" },
-        { "src": "/api/redis-test", "dest": "/minimal_api.py" },
-        { "src": "/api/chat", "dest": "/minimal_api.py" },
-        { "src": "/api/(.*)", "dest": "/minimal_api.py" },
+        { "src": "/api/(.*)", "dest": "/api" },
         { "src": "/(.*\\.(js|css|svg|png|jpg|jpeg|gif|ico))", "dest": "/frontend/$1" },
+        { "src": "/", "dest": "/frontend/index.html" },
         { "src": "/(.*)", "dest": "/frontend/index.html" }
     ],
     "env": {

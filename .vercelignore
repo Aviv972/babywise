@@ -9,7 +9,9 @@
 !frontend/*.js
 !frontend/*.css
 !frontend/*.svg
+!frontend/*.ico
 !frontend/favicon.svg
+!frontend/favicon.ico
 !frontend/baby-icon.svg
 !frontend/style.css
 !frontend/script.js
@@ -69,16 +71,16 @@ README*
 **/*.test.ts
 
 # Additional files to exclude
-**/*.pyc
 **/__pycache__/
-**/.git*
 **/.vscode*
 **/.idea*
 **/node_modules/
 **/.DS_Store
 
-# Unused backend modules 
+# Unused backend modules
 backend/
+minimal_api.py
+minimal-requirements.txt
 **/tensorflow*
 **/torch*
 **/pandas*
@@ -93,7 +95,6 @@ backend/
 **/cv2*
 **/*audio*
 **/*video*
-**/*image*
 **/*vision*
 **/PIL*
 **/*tokenizers*/
